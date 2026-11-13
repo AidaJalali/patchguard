@@ -76,12 +76,21 @@ class DiagnosticsParser:
         cli_command: str,
         gdb_backtrace: str = "",
     ) -> ExecutionResult:
+        base = {
+            "test_id": test_id,
+            "version": artifact.version,
+            "build_type": artifact.build_type,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "duration_ms": duration_ms,
+            "cli_command": cli_command,
+        }
+
         # --- Resource limits (never classified as security crashes) ---
         if timed_out:
             return self._result(
-                test_id=test_id,
-                artifact=artifact,
-                exit_code=exit_code,
+                **base,
                 signal=None,
                 timed_out=True,
                 oom_killed=oom_killed,
@@ -89,17 +98,11 @@ class DiagnosticsParser:
                 error_type="timeout",
                 detection_mechanism="TIMEOUT",
                 stack_trace=[],
-                stdout=stdout,
-                stderr=stderr,
-                duration_ms=duration_ms,
-                cli_command=cli_command,
             )
 
         if oom_killed:
             return self._result(
-                test_id=test_id,
-                artifact=artifact,
-                exit_code=exit_code,
+                **base,
                 signal=None,
                 timed_out=False,
                 oom_killed=True,
@@ -107,10 +110,6 @@ class DiagnosticsParser:
                 error_type="oom",
                 detection_mechanism="OOM",
                 stack_trace=[],
-                stdout=stdout,
-                stderr=stderr,
-                duration_ms=duration_ms,
-                cli_command=cli_command,
             )
 
         combined = f"{stderr}\n{stdout}"
@@ -120,9 +119,7 @@ class DiagnosticsParser:
         if asan is not None:
             error_type, frames = asan
             return self._result(
-                test_id=test_id,
-                artifact=artifact,
-                exit_code=exit_code,
+                **base,
                 signal=self._signal_from_exit(exit_code),
                 timed_out=False,
                 oom_killed=False,
@@ -130,10 +127,6 @@ class DiagnosticsParser:
                 error_type=error_type,
                 detection_mechanism="ASAN",
                 stack_trace=frames,
-                stdout=stdout,
-                stderr=stderr,
-                duration_ms=duration_ms,
-                cli_command=cli_command,
             )
 
         # --- UndefinedBehaviorSanitizer ---
@@ -141,9 +134,7 @@ class DiagnosticsParser:
         if ubsan is not None:
             error_type, frames = ubsan
             return self._result(
-                test_id=test_id,
-                artifact=artifact,
-                exit_code=exit_code,
+                **base,
                 signal=self._signal_from_exit(exit_code),
                 timed_out=False,
                 oom_killed=False,
@@ -151,18 +142,12 @@ class DiagnosticsParser:
                 error_type=error_type,
                 detection_mechanism="UBSAN",
                 stack_trace=frames,
-                stdout=stdout,
-                stderr=stderr,
-                duration_ms=duration_ms,
-                cli_command=cli_command,
             )
 
         # --- Binary protection (stack canary) ---
         if _STACK_SMASH_RE.search(combined):
             return self._result(
-                test_id=test_id,
-                artifact=artifact,
-                exit_code=exit_code,
+                **base,
                 signal=self._signal_from_exit(exit_code) or "SIGABRT",
                 timed_out=False,
                 oom_killed=False,
@@ -170,10 +155,6 @@ class DiagnosticsParser:
                 error_type="stack-canary-abort",
                 detection_mechanism="BINARY_PROTECTION",
                 stack_trace=self._parse_sanitizer_frames(combined),
-                stdout=stdout,
-                stderr=stderr,
-                duration_ms=duration_ms,
-                cli_command=cli_command,
             )
 
         # --- OS signals ---
@@ -186,9 +167,7 @@ class DiagnosticsParser:
                 frames = self._parse_gdb_frames(combined)
 
             return self._result(
-                test_id=test_id,
-                artifact=artifact,
-                exit_code=exit_code,
+                **base,
                 signal=signal,
                 timed_out=False,
                 oom_killed=False,
@@ -196,17 +175,11 @@ class DiagnosticsParser:
                 error_type="unclassified-crash",
                 detection_mechanism="OS_SIGNAL",
                 stack_trace=frames,
-                stdout=stdout,
-                stderr=stderr,
-                duration_ms=duration_ms,
-                cli_command=cli_command,
             )
 
         # --- Clean run ---
         return self._result(
-            test_id=test_id,
-            artifact=artifact,
-            exit_code=exit_code,
+            **base,
             signal=None,
             timed_out=False,
             oom_killed=False,
@@ -214,10 +187,6 @@ class DiagnosticsParser:
             error_type="none",
             detection_mechanism="NONE",
             stack_trace=[],
-            stdout=stdout,
-            stderr=stderr,
-            duration_ms=duration_ms,
-            cli_command=cli_command,
         )
 
     # ------------------------------------------------------------------ #

@@ -7,7 +7,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path, PurePosixPath
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from src.exceptions import ConfigOrBuildError
 from src.models import BuildArtifact, BuildType, TargetConfig, VersionType

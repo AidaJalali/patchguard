@@ -170,7 +170,7 @@ class DockerSandboxRunner:
         bin_name = binary.name
         work = self._docker_path(str(work_dir.resolve()))
 
-        return [
+        cmd = [
             self.docker_bin,
             "run",
             "--rm",
@@ -188,18 +188,22 @@ class DockerSandboxRunner:
             f"{work}:/work",
             "-w",
             "/work",
-            # Alias the binary to a stable path
-            "--entrypoint",
-            "bash",
-            self.image,
-            "-lc",
-            (
-                f"ln -sf /artifact/{shlex.quote(bin_name)} /tmp/binary 2>/dev/null; "
-                # Prefer copying to a writable location under /tmp for the sandbox user
-                f"cp /artifact/{shlex.quote(bin_name)} /tmp/binary && chmod +x /tmp/binary; "
-                + container_cmd.replace("/artifact/binary", "/tmp/binary")
-            ),
         ]
+        if config.input_mode == "stdin":
+            cmd.append("-i")
+        cmd.extend(
+            [
+                "--entrypoint",
+                "bash",
+                self.image,
+                "-lc",
+                (
+                    f"cp /artifact/{shlex.quote(bin_name)} /tmp/binary && chmod +x /tmp/binary; "
+                    + container_cmd.replace("/artifact/binary", "/tmp/binary")
+                ),
+            ]
+        )
+        return cmd
 
     # ------------------------------------------------------------------ #
     # Execution / metrics
