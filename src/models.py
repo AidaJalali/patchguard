@@ -245,3 +245,27 @@ class ReproducerArtifact:
     minimized_input_path: str
     regression_test_path: str | None = None
     hardening_report: HardeningReport | None = None
+
+
+@dataclass
+class TestSpec:
+    id: str
+    kind: str
+    input_bytes: bytes
+    expected_exit_code: int | None
+    is_valid_input: bool
+    stdout_kind: str
+    stdout_value: object
+    stderr_pattern: str | None = None
+    base_expect: dict | None = None
+    patched_expect: dict | None = None
+
+
+@dataclass
+class ValidationConfig:
+    target: TargetConfig
+    argv_template: list[str] | None
+    oracle_source: str
+    work_dir: str
+    output_dir: str
+    tests: list[TestSpec]

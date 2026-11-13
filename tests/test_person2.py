@@ -101,6 +101,28 @@ class TestDiff:
         ]
         assert Hunk(5, 0, 7, 2).interval("base") is None
 
+    def test_pure_insertion_hunk_marks_insertion_point_function(self):
+
+
+        change = FileDiff(
+            "vuln.c",
+            [Hunk(7, 0, 8, 3)],
+            [FunctionSpan("vuln.c", "main", 5, 14)],
+            [FunctionSpan("vuln.c", "main", 5, 17)],
+        )
+        assert [f.name for f in change.modified_functions("base")] == ["main"]
+        assert [f.name for f in change.modified_functions("patched")] == ["main"]
+
+    def test_pure_deletion_hunk_marks_insertion_point_function(self):
+        change = FileDiff(
+            "vuln.c",
+            [Hunk(7, 3, 7, 0)],
+            [FunctionSpan("vuln.c", "main", 5, 14)],
+            [FunctionSpan("vuln.c", "main", 5, 11)],
+        )
+        assert [f.name for f in change.modified_functions("base")] == ["main"]
+        assert [f.name for f in change.modified_functions("patched")] == ["main"]
+
     def test_real_c_ast_ignores_comments_strings_and_declarations(self):
         source = """// int fake() { }
 const char *s = "int bogus() { }";
@@ -147,7 +169,9 @@ int parse(int x) {
         ]
         patch = PatchDiff([FileDiff("x.c", [Hunk(2, 1, 2, 0)], functions, functions)])
         assert [f.name for f in patch.modified_functions("base")] == ["a"]
-        assert not patch.modified_functions("patched")
+
+
+        assert [f.name for f in patch.modified_functions("patched")] == ["a"]
         assert functions[2].key not in patch.neighborhood("base", 1)
         assert functions[2].key in patch.neighborhood("base", 2)
 

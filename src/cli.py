@@ -42,12 +42,11 @@ def main(argv=None) -> int:
                         f"{label} ({output}) must not overwrite the input "
                         f"config ({args.config})"
                     )
-            data = {
-                "target_name": args.config.stem or "unconfigured",
-                "errors": [
-                    "Validation pipeline unavailable: build, runner, and classifier adapters are not connected."
-                ],
-            }
+            from validation import run_validation
+
+            result = run_validation(args.config, args.output_json, args.output_md)
+            print(f"{result['outcome']} (exit {result['exit_code']})")
+            return result["exit_code"]
         else:
             if paths_alias(args.results, args.output_json) or paths_alias(
                 args.results, args.output_md

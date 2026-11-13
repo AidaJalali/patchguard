@@ -439,7 +439,9 @@ def test_validate_explicitly_reports_missing_integration(tmp_path):
         "new",
     )
     assert result.returncode == 30
-    assert "not connected" in (tmp_path / "SUMMARY.md").read_text()
+    summary = (tmp_path / "SUMMARY.md").read_text()
+    assert "Configuration file not found" in summary
+    assert json.loads((tmp_path / "report.json").read_text())["exit_code"] == 30
 
 
 def test_help_and_argument_errors(tmp_path):

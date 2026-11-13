@@ -62,7 +62,15 @@ class FileDiff:
 
     def modified_functions(self, version: str) -> list[FunctionSpan]:
         functions = self.base_functions if version == "base" else self.patched_functions
-        intervals = [h.interval(version) for h in self.hunks]
+        intervals = []
+        for hunk in self.hunks:
+            interval = hunk.interval(version)
+            if interval is None:
+
+
+                point = hunk.old_start if version == "base" else hunk.new_start
+                interval = (point, point)
+            intervals.append(interval)
         return [
             f
             for f in functions
