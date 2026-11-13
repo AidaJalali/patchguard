@@ -1,44 +1,64 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+import re
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from builder.builder import DualBuilder
 from classifier.verdict import classify_pair
 from config.loader import load_validation_config
 from correlator.correlator import DiffCorrelation, correlate
+from diff_parser.diff_analyzer import DiffError, analyze_git
 from exceptions import ConfigOrBuildError
-from hardening.elf_checker import compare_hardening, inspect_elf
-from diff_parser.diff_analyzer import analyze_git
+from hardening.elf_checker import HardeningError, compare_hardening, inspect_elf
 from models import (
     TestSpec,
     ValidationConfig,
 )
-from oracle.functional_oracle import OracleExpectation, evaluate
+from oracle.functional_oracle import OracleExpectation, OracleError, evaluate
 from regression_gen.generator import (
+    RegressionError,
     RegressionExpectation,
     VersionExpectation,
     promote_to_regression_suite,
     verify_manifest_entry,
 )
 from reporter.report_gen import write_reports
-from reproducer.bundler import FindingContext, build_reproducer, verify_reproducibility
+from reproducer.bundler import BundleError, FindingContext, build_reproducer, verify_reproducibility
 from runner.adapter import TargetRunnerAdapter
 
 BUILD_TYPES = ("release", "sanitized")
 
+_PIPELINE_ERRORS = (
+    ConfigOrBuildError,
+    OSError,
+    ValueError,
+    TypeError,
+    BundleError,
+    RegressionError,
+    HardeningError,
+    DiffError,
+    OracleError,
+    re.error,
+)
 
-def run_validation(config_path, output_json, output_md) -> dict:
+
+def run_validation(config_path, output_json, output_md, *, base_override=None, patched_override=None) -> dict:
     try:
         cfg = load_validation_config(config_path)
+        if base_override is not None or patched_override is not None:
+            target = cfg.target
+            if base_override is not None:
+                target = replace(target, base_ref=str(base_override))
+            if patched_override is not None:
+                target = replace(target, patched_ref=str(patched_override))
+            cfg = replace(cfg, target=target)
     except ConfigOrBuildError as exc:
         return _write_failure(config_path, output_json, output_md, exc.message)
     state = {"data": None}
     try:
         return _run_pipeline(cfg, output_json, output_md, state)
-    except ConfigOrBuildError as exc:
-        return _failure_from_state(config_path, state, output_json, output_md, exc.message)
-    except (OSError, ValueError) as exc:
+    except _PIPELINE_ERRORS as exc:
         return _failure_from_state(
             config_path, state, output_json, output_md, f"pipeline failed: {exc}"
         )
@@ -82,6 +102,7 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
         "hardening_reports": [],
         "hardening_deltas": [],
         "regression_entries": [],
+        "evidence_gaps": [],
         "errors": [],
         "base_bug_reproduced": False,
         "patch_fix_verified": False,
@@ -136,6 +157,23 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
             base_oracle = evaluate(base, oracle) if oracle else None
             patched_oracle = evaluate(patched, oracle) if oracle else None
 
+            if spec.kind in ("security", "boundary"):
+                if base.timed_out or base.oom_killed or patched.timed_out or patched.oom_killed:
+                    data["evidence_gaps"].append(
+                        f"{spec.id}-{build_type}: resource-limit termination is "
+                        "not crash evidence and leaves the check incomplete"
+                    )
+                elif (
+                    oracle is not None
+                    and not base.crashed
+                    and not patched.crashed
+                    and (not base_oracle.passed or not patched_oracle.passed)
+                ):
+                    data["evidence_gaps"].append(
+                        f"{spec.id}-{build_type}: expected rejection behavior "
+                        "not observed (oracle mismatch on invalid input)"
+                    )
+
             interesting = (
                 base.crashed
                 or patched.crashed
@@ -146,16 +184,23 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
                     and base_oracle.passed
                     and not patched_oracle.passed
                 )
+                or (
+                    spec.kind in ("security", "boundary")
+                    and (base.timed_out or base.oom_killed
+                         or patched.timed_out or patched.oom_killed)
+                )
             )
             if not interesting:
                 continue
 
             finding_id = f"{spec.id}-{build_type}"
             base_replay, base_artifact = _crash_evidence(
-                finding_id, spec, base, build_type, cfg, adapter, artifacts, output_root=f"{cfg.output_dir}/reproducers"
+                finding_id, spec, base, build_type, cfg, adapter, artifacts,
+                output_root=f"{cfg.output_dir}/reproducers/base",
             )
             patched_replay, patched_artifact = _crash_evidence(
-                finding_id, spec, patched, build_type, cfg, adapter, artifacts, output_root=f"{cfg.output_dir}/reproducers"
+                finding_id, spec, patched, build_type, cfg, adapter, artifacts,
+                output_root=f"{cfg.output_dir}/reproducers/patched",
             )
             if base_artifact is not None:
                 data["reproducers"].append(asdict(base_artifact))
@@ -182,7 +227,10 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
                 patched_artifact=patched_artifact,
             )
 
-            if finding.status == "Inconclusive" and not (base.crashed or patched.crashed):
+            if (finding.status == "Inconclusive"
+                    and not (base.crashed or patched.crashed)
+                    and not (base.timed_out or base.oom_killed
+                             or patched.timed_out or patched.oom_killed)):
                 continue
             data["findings"].append(finding.to_dict())
 
@@ -198,7 +246,12 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
         finding["status"] == "Fixed" for finding in data["findings"]
     )
     data["functional_tests_passed"] = functional_total > 0 and not functional_failures
-    data["mandatory_checks_complete"] = True
+
+
+    data["mandatory_checks_complete"] = (
+        not data["evidence_gaps"]
+        and all(entry["verified"] for entry in data["regression_entries"])
+    )
     return write_reports(data, output_json, output_md)
 
 
@@ -256,9 +309,14 @@ def _promote_regression(spec, artifact, adapter, cfg, regression_entries):
     verified = verify_manifest_entry(
         adapter, entry, minimized, timeout_sec=cfg.target.timeout_sec
     )
-    regression_entries.append(
-        {"finding_id": entry.finding_id, "verified": verified.ok}
-    )
+    record = {"finding_id": entry.finding_id, "verified": verified.ok}
+    if not verified.ok:
+        record["reasons"] = [
+            {"version": outcome.version, "reason": outcome.reason}
+            for outcome in (verified.base, verified.patched)
+            if not outcome.ok
+        ]
+    regression_entries.append(record)
 
 
 def _expectation_from_dict(data: dict | None) -> VersionExpectation:

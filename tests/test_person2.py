@@ -123,6 +123,39 @@ class TestDiff:
         assert [f.name for f in change.modified_functions("base")] == ["main"]
         assert [f.name for f in change.modified_functions("patched")] == ["main"]
 
+    def test_graph_only_files_do_not_poison_diagnostics(self, monkeypatch):
+
+
+
+        from diff_parser import diff_analyzer
+
+        real_extract = diff_analyzer.extract_functions
+
+        def flaky_extract(source, **kwargs):
+            if "unity.c" in str(kwargs.get("file", "")):
+                raise DiffError("AST analysis failed for unity.c: missing include")
+            return real_extract(source, **kwargs)
+
+        monkeypatch.setattr(diff_analyzer, "extract_functions", flaky_extract)
+        changes = {
+            "changed.c": (
+                "int main(void) { return 0; }\n",
+                "int main(void) { return 1; }\n",
+                "@@ -1 +1 @@\n-int main(void) { return 0; }\n"
+                "+int main(void) { return 1; }\n",
+            ),
+            "tests/unity.c": (
+                "int helper(void) { return 1; }\n",
+                "int helper(void) { return 1; }\n",
+                "",
+            ),
+        }
+        patch = diff_analyzer.analyze_sources(changes)
+        assert patch.diagnostics == []
+        assert {f.path for f in patch.files} == {"changed.c", "tests/unity.c"}
+        changed = next(f for f in patch.files if f.path == "changed.c")
+        assert [f.name for f in changed.modified_functions("base")] == ["main"]
+
     def test_real_c_ast_ignores_comments_strings_and_declarations(self):
         source = """// int fake() { }
 const char *s = "int bogus() { }";

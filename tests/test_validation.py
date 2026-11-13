@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -328,6 +329,91 @@ class TestValidatePipeline:
         assert report["executions"]
         assert report["mandatory_checks_complete"] is False
 
+    def test_failed_regression_verification_gates_pass(
+            self, tmp_path, scenario_repo, local_transport):
+        config = _config(tmp_path, scenario_repo, "correct")
+        data = yaml.safe_load(config.read_text())
+        for test in data["tests"]:
+            if test["id"] == "poc-overflow":
+                test["patched_expect"] = {"crash": False, "exit_code": 99}
+        config.write_text(yaml.safe_dump(data))
+        report = _run(tmp_path, config)
+        assert report["exit_code"] == 40
+        assert report["mandatory_checks_complete"] is False
+        entries = report["regression_entries"]
+        assert any(not entry["verified"] for entry in entries)
+        assert any("reasons" in entry for entry in entries)
+
+    def test_timeout_security_test_no_longer_vanishes(
+            self, tmp_path, scenario_repo, local_transport, monkeypatch):
+        import runner.sandbox as sandbox_mod
+
+        real_run_raw = sandbox_mod.DockerSandboxRunner.run_raw
+
+        def timeout_raw(self, artifact, config, input_bytes=None, args=None):
+            result = real_run_raw(self, artifact, config, input_bytes, args)
+            if input_bytes and b"TIMEOUTME" in input_bytes:
+                result["timed_out"] = True
+                result["exit_code"] = 124
+            return result
+
+        monkeypatch.setattr(sandbox_mod.DockerSandboxRunner, "run_raw",
+                            timeout_raw)
+        poc_timeout = {"id": "poc-timeout", "kind": "security",
+                       "input": "TIMEOUTME", "expected_exit_code": None,
+                       "is_valid_input": False, "stdout_kind": "none",
+                       "base_expect": {"crash": True},
+                       "patched_expect": {"crash": False, "exit_code": 1}}
+        config = _config(tmp_path, scenario_repo, "correct")
+        data = yaml.safe_load(config.read_text())
+        data["tests"].append(poc_timeout)
+        config.write_text(yaml.safe_dump(data))
+        report = _run(tmp_path, config)
+        assert report["exit_code"] == 40
+        assert report["mandatory_checks_complete"] is False
+        assert report["evidence_gaps"]
+        assert any("poc-timeout" in f["finding_id"] for f in report["findings"])
+
+    @pytest.mark.parametrize("override,match", [
+        ({"tests": [{"id": "a b", "kind": "functional", "input": "hi",
+                     "expected_exit_code": 0, "is_valid_input": True,
+                     "stdout_kind": "exact", "stdout_value": "ok:hi\n"}]},
+         "must match"),
+        ({"tests": [{"id": "short-ok", "kind": "functional", "input": "hi",
+                     "expected_exit_code": 0, "is_valid_input": True,
+                     "stdout_kind": "regex", "stdout_value": "(["}]},
+         "invalid stdout regex"),
+        ({"tests": [{"id": "short-ok", "kind": "functional", "input": "hi",
+                     "expected_exit_code": 0, "is_valid_input": True,
+                     "stdout_kind": "exact", "stdout_value": "ok:hi\n",
+                     "stderr_pattern": "(["}]},
+         "invalid stderr_pattern regex"),
+        ({"tests": [{"id": "short-ok", "kind": "functional", "input": "hi",
+                     "expected_exit_code": None, "is_valid_input": True,
+                     "stdout_kind": "exact", "stdout_value": "ok:hi\n"}]},
+         "explicit integer expected_exit_code"),
+        ({"timeout_sec": ".nan"}, "finite"),
+        ({"timeout_sec": ".inf"}, "finite"),
+        ({"cpus": "nan"}, "finite"),
+    ])
+    def test_invalid_configs_rejected_at_load(
+            self, tmp_path, scenario_repo, local_transport, override, match):
+        config = _config(tmp_path, scenario_repo, "correct", **override)
+        report = _run(tmp_path, config)
+        assert report["exit_code"] == 30
+        assert any(match in error for error in report["errors"])
+        assert report["executions"] == []
+
+    def test_base_override_flag_is_honored(
+            self, tmp_path, scenario_repo, local_transport):
+        config = _config(tmp_path, scenario_repo, "correct")
+        out_json = tmp_path / "report.json"
+        out_md = tmp_path / "SUMMARY.md"
+        report = run_validation(str(config), str(out_json), str(out_md),
+                                base_override="NO-SUCH-REF")
+        assert report["exit_code"] == 30
+        assert any("Unknown git ref" in error for error in report["errors"])
+
 
 @requires_docker
 def test_cli_validate_end_to_end_with_real_docker(tmp_path):
@@ -339,9 +425,8 @@ def test_cli_validate_end_to_end_with_real_docker(tmp_path):
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     result = subprocess.run(
-        [root / ".venv" / "bin" / "python", "-m", "patch_validator",
+        [sys.executable, "-m", "patch_validator",
          "validate", "--config", "targets/configs/scenario-correct.yaml",
-         "--base", "x", "--patched", "y",
          "--output-json", str(out_dir / "report.json"),
          "--output-md", str(out_dir / "SUMMARY.md")],
         cwd=root, env=env, capture_output=True, text=True, timeout=600,

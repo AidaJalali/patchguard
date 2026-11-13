@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict
 
@@ -24,6 +26,7 @@ REQUIRED_KEYS = (
 VALID_INPUT_MODES = ("stdin", "file", "args")
 TEST_KINDS = ("functional", "boundary", "security")
 STDOUT_KINDS = ("exact", "regex", "json", "none")
+_TEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def load_target_config(config_path: str) -> TargetConfig:
@@ -89,18 +92,34 @@ def _validate_and_build(data: Dict[str, Any]) -> TargetConfig:
             message=f"Invalid input_mode '{input_mode}'; must be one of {VALID_INPUT_MODES}",
         )
 
-    timeout_sec = float(data.get("timeout_sec", 5.0))
-    if timeout_sec <= 0:
+    try:
+        timeout_sec = float(data.get("timeout_sec", 5.0))
+    except (TypeError, ValueError) as exc:
+        raise ConfigOrBuildError(code=30, message=f"timeout_sec must be a finite number: {exc}") from exc
+    if not math.isfinite(timeout_sec) or timeout_sec <= 0:
         raise ConfigOrBuildError(
             code=30,
-            message=f"timeout_sec must be > 0, got {timeout_sec}",
+            message=f"timeout_sec must be a finite number > 0, got {timeout_sec}",
         )
 
-    memory_mb = int(data.get("memory_mb", 512))
+    try:
+        memory_mb = int(data.get("memory_mb", 512))
+    except (TypeError, ValueError) as exc:
+        raise ConfigOrBuildError(code=30, message=f"memory_mb must be an integer: {exc}") from exc
     if memory_mb < 64:
         raise ConfigOrBuildError(
             code=30,
             message=f"memory_mb must be >= 64, got {memory_mb}",
+        )
+
+    try:
+        cpus = float(data.get("cpus", 1.0))
+    except (TypeError, ValueError) as exc:
+        raise ConfigOrBuildError(code=30, message=f"cpus must be a finite number: {exc}") from exc
+    if not math.isfinite(cpus) or cpus <= 0:
+        raise ConfigOrBuildError(
+            code=30,
+            message=f"cpus must be a finite number > 0, got {cpus}",
         )
 
     repo_path = str(data["repo_path"])
@@ -130,7 +149,7 @@ def _validate_and_build(data: Dict[str, Any]) -> TargetConfig:
             input_mode=input_mode,
             timeout_sec=timeout_sec,
             memory_mb=memory_mb,
-            cpus=float(data.get("cpus", 1.0)),
+            cpus=cpus,
             env_vars=env_vars,
             functional_tests_path=str(data.get("functional_tests_path", "")),
             security_tests_path=str(data.get("security_tests_path", "")),
@@ -220,6 +239,11 @@ def _validate_test(item: Any, index: int, input_mode: str, seen: set[str]) -> Te
     if not isinstance(test_id, str) or not test_id.strip():
         raise ConfigOrBuildError(code=30, message=f"{where}: 'id' must be a nonempty string")
     test_id = test_id.strip()
+    if not _TEST_ID_RE.fullmatch(test_id):
+        raise ConfigOrBuildError(
+            code=30,
+            message=f"{where}: test id {test_id!r} must match [A-Za-z0-9][A-Za-z0-9._-]*",
+        )
     if test_id in seen:
         raise ConfigOrBuildError(code=30, message=f"duplicate test id '{test_id}'")
     seen.add(test_id)
@@ -251,6 +275,13 @@ def _validate_test(item: Any, index: int, input_mode: str, seen: set[str]) -> Te
         isinstance(expected_exit_code, bool) or not isinstance(expected_exit_code, int)
     ):
         raise ConfigOrBuildError(code=30, message=f"{where} ({test_id}): expected_exit_code must be an integer or null")
+    if kind in ("functional", "boundary") and (
+        isinstance(expected_exit_code, bool) or not isinstance(expected_exit_code, int)
+    ):
+        raise ConfigOrBuildError(
+            code=30,
+            message=f"{where} ({test_id}): {kind} tests require an explicit integer expected_exit_code",
+        )
 
     is_valid_input = item.get("is_valid_input", False)
     if type(is_valid_input) is not bool:
@@ -260,9 +291,29 @@ def _validate_test(item: Any, index: int, input_mode: str, seen: set[str]) -> Te
     if stdout_kind not in STDOUT_KINDS:
         raise ConfigOrBuildError(code=30, message=f"{where} ({test_id}): stdout_kind must be one of {STDOUT_KINDS}")
 
+    stdout_value = item.get("stdout_value")
+    if stdout_kind == "exact":
+        if not isinstance(stdout_value, str):
+            raise ConfigOrBuildError(code=30, message=f"{where} ({test_id}): stdout_kind 'exact' requires a string stdout_value")
+    elif stdout_kind == "regex":
+        if not isinstance(stdout_value, str):
+            raise ConfigOrBuildError(code=30, message=f"{where} ({test_id}): stdout_kind 'regex' requires a string stdout_value")
+        try:
+            re.compile(stdout_value)
+        except re.error as exc:
+            raise ConfigOrBuildError(code=30, message=f"{where} ({test_id}): invalid stdout regex: {exc}") from exc
+    elif stdout_kind == "none":
+        if stdout_value is not None:
+            raise ConfigOrBuildError(code=30, message=f"{where} ({test_id}): stdout_kind 'none' must not carry stdout_value")
+
     stderr_pattern = item.get("stderr_pattern")
-    if stderr_pattern is not None and not isinstance(stderr_pattern, str):
-        raise ConfigOrBuildError(code=30, message=f"{where} ({test_id}): stderr_pattern must be a string or null")
+    if stderr_pattern is not None:
+        if not isinstance(stderr_pattern, str):
+            raise ConfigOrBuildError(code=30, message=f"{where} ({test_id}): stderr_pattern must be a string or null")
+        try:
+            re.compile(stderr_pattern)
+        except re.error as exc:
+            raise ConfigOrBuildError(code=30, message=f"{where} ({test_id}): invalid stderr_pattern regex: {exc}") from exc
 
     base_expect = item.get("base_expect")
     patched_expect = item.get("patched_expect")
@@ -293,7 +344,7 @@ def _validate_test(item: Any, index: int, input_mode: str, seen: set[str]) -> Te
         expected_exit_code=expected_exit_code,
         is_valid_input=is_valid_input,
         stdout_kind=stdout_kind,
-        stdout_value=item.get("stdout_value"),
+        stdout_value=stdout_value,
         stderr_pattern=stderr_pattern,
         base_expect=base_expect,
         patched_expect=patched_expect,

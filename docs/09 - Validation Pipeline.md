@@ -52,9 +52,11 @@ Each test: `id` (unique), `kind` (`functional`/`boundary`/`security`), `input` (
 
 **cjson-target** (real open-source target): [cJSON](https://github.com/DaveGamble/cJSON), MIT license. CVE-2023-53154 — heap-based buffer over-read in `parse_object` on trailing-comma input such as `{"1":1,` (CWE-125, [NVD](https://nvd.nist.gov/vuln/detail/CVE-2023-53154), upstream [issue #800](https://github.com/DaveGamble/cJSON/issues/800), fix commit `3ef4e4e730e5efd381be612df41e1ff3f5bb3c32` "Fix heap buffer overflow", released in 1.7.18).
 
-- Vulnerable: v1.7.17 `87d8f0961a01bf09bef98ff89bae9fdec42181ee` + a stdin driver harness (our code).
+- Vulnerable: the fix commit's parent `826cd6f842ae7e46ee38bbc097f9a34f2947388d` ("Add test for heap buffer overflow") — vulnerable, pre-1.7.18; v1.7.17 (`87d8f09`) is the last tagged vulnerable release. Pinning the parent keeps the scenario diff exactly the fix.
 - Correct: the upstream fix commit + harness.
-- Incomplete/regression: synthetic scenario patches crafted by the team on top of the pinned vulnerable commit.
+- Incomplete: synthetic patch protecting only the first trailing comma — `{"1":1,` is rejected, `{"1":1,"2":2,` still over-reads.
+- Regression: synthetic over-strict patch (real fix + reject any multi-member object), breaking valid `{"a":1,"b":[2,3]}` input.
+- Harness: a stdin driver that feeds `cJSON_ParseWithLength` an **exactly-sized** `malloc` buffer — cJSON uses the caller's buffer directly, so only exact sizing exposes the 1-byte over-read to ASan (verified: `heap-buffer-overflow` under ASan on the pinned vulnerable commit; clean `parse error` after the fix).
 
 Reproduce: `./targets/build_cjson_target.sh && docker build -t patchguard-sandbox:latest . && PYTHONPATH=src .venv/bin/python -m patch_validator validate --config targets/configs/scenario-cjson-correct.yaml ...` (executes upstream code only inside the isolated sandbox).
 
@@ -67,15 +69,16 @@ Reproduce: `./targets/build_cjson_target.sh && docker build -t patchguard-sandbo
 | `scenario-regression` | 20 | 20 |
 | `scenario-no-bug` | 40 | 40 |
 | `scenario-build-fail` | 30 | 30 |
-| `scenario-cjson-correct` | 0 | not yet executed (see below) |
-| `scenario-cjson-incomplete` | 10 | not yet executed (see below) |
+| `scenario-cjson-correct` | 0 | 0 |
+| `scenario-cjson-incomplete` | 10 | 10 |
+| `scenario-cjson-regression` | 20 | 20 |
 
 Exit precedence is `30 > 10 > 20 > 40 > 0`; partial evidence is retained in the report when a pipeline stage fails. Completion flags are derived from work actually performed.
 
 ## Limitations and TA coordination
 
 - The fixture oracle expectations are team-designed illustrations; they require TA approval as an independent reference, as do the cJSON harness expectations (upstream parser behavior for valid/rejected JSON, verified against the pinned commits).
-- The cJSON scenario configurations are prepared and the fix was verified from primary sources (commit diff, issue, NVD), but the scenario runs themselves have not been executed in this environment yet: running the externally cloned upstream code requires explicit authorization. Until those runs complete, the real-open-source-target requirement is only partially verified.
+- The cJSON scenarios were executed with real Docker isolation against the pinned commits: the correct scenario reproduces the over-read on the vulnerable ref and verifies the upstream fix (exit 0); the incomplete scenario's bypass input still crashes the synthetic partial patch (exit 10); the regression patch breaks valid multi-member JSON (exit 20). Incomplete/regression branches for cJSON are synthetic, not upstream commits.
 - cJSON's release-build over-read may not crash visibly; the finding is expected to surface in the sanitized build only. Incomplete/regression branches for cJSON are synthetic, not upstream commits.
 - The pipeline runs one scenario per invocation; concurrent runs sharing an `output_dir` are not supported.
 - `--base`/`--patched` CLI flags are vestigial (refs come from the config).

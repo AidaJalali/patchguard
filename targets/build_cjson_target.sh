@@ -5,14 +5,14 @@ cd "$(dirname "$0")/.."
 REPO=targets/cjson_target
 CONFIGS=targets/configs
 UPSTREAM=https://github.com/DaveGamble/cJSON.git
-BASE_COMMIT=87d8f0961a01bf09bef98ff89bae9fdec42181ee
 FIX_COMMIT=3ef4e4e730e5efd381be612df41e1ff3f5bb3c32
 
 rm -rf "$REPO"
 git clone -q "$UPSTREAM" "$REPO"
 git -C "$REPO" config user.email "scenario@patchguard.local"
 git -C "$REPO" config user.name "PatchGuard Scenario"
-git -C "$REPO" fetch -q origin "$BASE_COMMIT" "$FIX_COMMIT"
+git -C "$REPO" fetch -q origin "$FIX_COMMIT"
+BASE_COMMIT=$(git -C "$REPO" rev-parse "$FIX_COMMIT^")
 
 write_driver() {
     cat > "$REPO/driver.c" <<'EOF'
@@ -23,9 +23,7 @@ write_driver() {
 int main(void) {
     char stack[4096];
     size_t length = fread(stack, 1, sizeof(stack) - 1, stdin);
-    /* cJSON_ParseWithLength uses the caller's buffer directly, so hand it an
-     * exactly-sized allocation: any out-of-bounds read in the parser is then
-     * a real heap over-read that ASan can detect. */
+
     char *buffer = (char *)malloc(length);
     if (buffer == NULL) return 2;
     for (size_t i = 0; i < length; i++) buffer[i] = stack[i];
@@ -55,18 +53,27 @@ make_scenario() {
             ;;
         incomplete)
             python3 - <<'PYEOF'
-import re
 path = "targets/cjson_target/cJSON.c"
 source = open(path).read()
-fix = """        if (cannot_access_at_index(input_buffer, 1))
+decl_marker = "    cJSON *head = NULL; /* linked list head */"
+assert source.count(decl_marker) == 1, "expected one head declaration"
+source = source.replace(
+    decl_marker,
+    decl_marker + "\n    size_t loop_count = 0;",
+    1,
+)
+fix = """        if (loop_count == 1)
+        {
+        if (cannot_access_at_index(input_buffer, 1))
         {
             goto fail;
         }
+        }
+        loop_count++;
 """
 marker = "        /* parse the name of the child */"
 assert source.count(marker) == 1, "expected one name-parse marker"
-guarded = ("        if (item->child == NULL)\n        {\n" + fix + "        }\n")
-open(path, "w").write(source.replace(marker, guarded + marker, 1))
+open(path, "w").write(source.replace(marker, fix + marker, 1))
 PYEOF
             ;;
         regression)

@@ -353,7 +353,11 @@ def analyze_sources(
                     )
                     setattr(item, f"{version}_functions", functions)
                 except DiffError as exc:
-                    diagnostics.append(f"{version}: {exc}")
+                    if item.hunks:
+
+
+
+                        diagnostics.append(f"{version}: {exc}")
         files.append(item)
     return PatchDiff(files, diagnostics)
 

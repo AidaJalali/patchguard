@@ -9,9 +9,8 @@ run_scenario() {
     local name="$1" expected="$2"
     local out_dir="/tmp/patchguard-scenarios/$name"
     mkdir -p "$out_dir"
-    PYTHONPATH=src .venv/bin/python -m patch_validator validate \
+    PYTHONPATH=src "${PYTHON_BIN:-$([ -x .venv/bin/python ] && printf .venv/bin/python || printf python3)}" -m patch_validator validate \
         --config "targets/configs/$name.yaml" \
-        --base x --patched y \
         --output-json "$out_dir/report.json" \
         --output-md "$out_dir/SUMMARY.md" \
         > "$out_dir/stdout.log" 2>&1
@@ -37,7 +36,8 @@ if [ "${RUN_CJSON:-1}" = "1" ]; then
         run_scenario scenario-cjson-incomplete 10
         run_scenario scenario-cjson-regression 20
     else
-        echo "WARN: cJSON target setup failed (network?); fixture matrix still evaluated"
+        echo "FAIL: cJSON target setup failed (network?) — the open-source target scenarios are required"
+        FAILED=1
     fi
 else
     echo "SKIP: cJSON scenarios (RUN_CJSON=0)"

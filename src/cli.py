@@ -22,11 +22,11 @@ def main(argv=None) -> int:
     )
     report.add_argument("--results", required=True, type=Path)
     validate = commands.add_parser(
-        "validate", help="reserved for the build/run/classification pipeline"
+        "validate", help="run the build/run/classification pipeline"
     )
     validate.add_argument("--config", required=True, type=Path)
-    validate.add_argument("--base", required=True)
-    validate.add_argument("--patched", required=True)
+    validate.add_argument("--base", nargs="?", default=None)
+    validate.add_argument("--patched", nargs="?", default=None)
     for command in (report, validate):
         command.add_argument("--output-json", type=Path, default=Path("report.json"))
         command.add_argument("--output-md", type=Path, default=Path("SUMMARY.md"))
@@ -44,7 +44,10 @@ def main(argv=None) -> int:
                     )
             from validation import run_validation
 
-            result = run_validation(args.config, args.output_json, args.output_md)
+            result = run_validation(
+                args.config, args.output_json, args.output_md,
+                base_override=args.base, patched_override=args.patched,
+            )
             print(f"{result['outcome']} (exit {result['exit_code']})")
             return result["exit_code"]
         else:

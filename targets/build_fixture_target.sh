@@ -4,7 +4,10 @@ cd "$(dirname "$0")/.."
 
 REPO=targets/fixture_target
 CONFIGS=targets/configs
-rm -rf "$REPO" "$CONFIGS"
+rm -rf "$REPO"
+rm -f "$CONFIGS"/scenario-correct.yaml "$CONFIGS"/scenario-incomplete.yaml \
+    "$CONFIGS"/scenario-regression.yaml "$CONFIGS"/scenario-no-bug.yaml \
+    "$CONFIGS"/scenario-build-fail.yaml
 mkdir -p "$REPO" "$CONFIGS"
 
 cat > "$REPO/vuln.c" <<'EOF'
