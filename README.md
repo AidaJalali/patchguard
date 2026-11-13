@@ -76,8 +76,8 @@ Requires `clang` on PATH (in addition to GCC/binutils used by the tests).
 - `src/classifier/verdict.py`: five-state per-finding verdicts; output fits the existing reporter.
 
 No target-specific names are hardcoded. Missing evidence stays Inconclusive;
-release and sanitized executions are kept separate. Production runner/coverage
-adapters and full `validate` integration remain pending.
+release and sanitized executions are kept separate. The runner adapter is available; coverage integration
+and full `validate` orchestration remain pending.
 
 See [Person 2 APIs, oracle schema, and limitations](<docs/06 - Person 2 Analysis and Verdict.md>).
 
@@ -86,3 +86,19 @@ function in another translation unit cannot satisfy an external call with the
 same name. ELF inspection reads runtime tags from `PT_DYNAMIC`, including when
 section headers are absent; dynamic symbol/relocation evidence also preserves
 canary detection in the sectionless test fixtures.
+
+## Person 1: build and execution integration
+
+The `sahand` implementation is integrated through canonical shared models and
+`runner.adapter.TargetRunnerAdapter`, which connects its Docker sandbox to the
+existing replay, minimization, and regression APIs. YAML configs require PyYAML
+(included in `requirements.txt`). Build the image with:
+
+```bash
+docker build -t patchguard-sandbox:latest .
+```
+
+See [Person 1 integration and runner usage](<docs/08 - Person 1 Integration.md>)
+for the reconciled contracts, input semantics, test coverage, and remaining
+pipeline work. Container tests require Docker access and this image; skipped
+container tests do not establish production sandbox correctness.

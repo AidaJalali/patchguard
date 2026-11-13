@@ -79,7 +79,7 @@ Tests cover real Clang C/C++ ASTs, cross-file calls, versioned headers, Git snap
 
 Still needed for full pipeline delivery:
 
-1. Person 1's real build/runner/diagnostic and coverage adapters.
+1. Production Docker validation of the integrated build/runner/diagnostic path and a coverage adapter (see doc 08; the RunnerPort adapter is now available).
 2. Person 4's complete `validate` orchestration and eight-scenario target matrix.
 3. Real target build flags and source-path normalization.
 4. TA coordination on independent oracle approval and target eligibility. Whether additional correlation/signature policies require approval must be checked against the original specification; this document does not invent approval requirements.

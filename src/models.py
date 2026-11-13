@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import NamedTuple, Protocol
+from typing import Literal, NamedTuple, Protocol
 
 EXIT_BUILD_OR_CONFIG_ERROR = 30
 EXIT_VULN_REMAINS = 10
@@ -38,6 +38,40 @@ STATUS_FUNCTIONAL_REGRESSION = "Functional Regression"
 STATUS_INCONCLUSIVE = "Inconclusive"
 
 
+InputMode = Literal["stdin", "file", "args"]
+BuildType = Literal["release", "sanitized"]
+VersionType = Literal["base", "patched"]
+
+
+@dataclass
+class TargetConfig:
+    target_name: str
+    repo_path: str
+    base_ref: str
+    patched_ref: str
+    build_cmd_release: str
+    build_cmd_sanitized: str
+    binary_rel_path: str
+    input_mode: InputMode
+    timeout_sec: float = 5.0
+    memory_mb: int = 512
+    cpus: float = 1.0
+    env_vars: dict[str, str] = field(default_factory=dict)
+    functional_tests_path: str = ""
+    security_tests_path: str = ""
+
+
+@dataclass
+class BuildArtifact:
+    version: VersionType
+    build_type: BuildType
+    commit_hash: str
+    binary_path: str
+    binary_sha256: str
+    compile_flags: str
+    build_dir: str
+
+
 @dataclass
 class StackFrame:
     index: int
@@ -63,6 +97,8 @@ class ExecutionResult:
     stderr: str = ""
     stdout_hash: str | None = None
     stderr_excerpt: str | None = None
+    duration_ms: int = 0
+    cli_command: str = ""
 
 
 class CrashSignature(NamedTuple):

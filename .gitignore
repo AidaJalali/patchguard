@@ -3,3 +3,16 @@ __pycache__/
 .pytest_cache/
 .venv/
 reproducers/
+
+*.egg-info/
+.eggs/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+venv/
+.env
+*.log
+.work/
+tmp/
+.DS_Store
