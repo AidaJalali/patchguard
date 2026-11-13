@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "target_name": "reporting-example-only",
+  "base_bug_reproduced": false,
+  "patch_fix_verified": false,
+  "functional_tests_passed": false,
+  "mandatory_checks_complete": false,
+  "findings": [],
+  "executions": [],
+  "reproducers": [],
+  "hardening_reports": [],
+  "hardening_deltas": [],
+  "errors": [],
+  "notes": "Reporting contract example only; no target was executed. Expected exit code: 40."
+}
