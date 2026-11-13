@@ -42,6 +42,25 @@ Project planning documents live in [`docs/`](docs/):
 | [4-Person Task Breakdown, Structure & Deliverables](<docs/02 - 4-Person Task Breakdown, Structure & Deliverables.docx>) | Per-member task split, structure, and deliverables |
 | [Overall Architecture, Timeline & Task Dependencies](<docs/03 - Overall Architecture, Timeline & Task Dependencies.docx>) | Architecture overview, schedule, and task dependencies |
 | [Person 3 Development Plan](<docs/04 - Person 3 Development Plan.md>) | Build plan for the Reproducibility, Minimizer & Binary Hardening modules |
+| [Validation Pipeline](<docs/09 - Validation Pipeline.md>) | End-to-end validate pipeline: setup, schema, targets, scenario matrix, limitations |
+
+## Validation pipeline
+
+`validate` executes the real pipeline — config → isolated builds → hardening → source analysis → execution → oracle → replay/minimize/bundle → correlate/classify → regression verification → reports → exit gate:
+
+```bash
+docker build -t patchguard-sandbox:latest .   # once; network needed
+./targets/build_fixture_target.sh             # deterministic C fixture target
+PYTHONPATH=src .venv/bin/python -m patch_validator validate \
+  --config targets/configs/scenario-correct.yaml \
+  --base any --patched any \
+  --output-json /tmp/pg-out/report.json --output-md /tmp/pg-out/SUMMARY.md
+./run_all_scenarios.sh                        # asserts 0 / 10 / 20 / 40 / 30
+```
+
+The scenario matrix is verified with real Docker execution: correct→0, incomplete→10, regression→20, no-bug→40, build-fail→30. The cJSON open-source target (CVE-2023-53154, pinned commits) is prepared; its scenario runs require authorization to execute the externally cloned code (see [docs/09](<docs/09 - Validation Pipeline.md>)).
+
+The GitHub Actions workflow runs module tests, real container/cross-module integration tests, and the full scenario matrix — Docker prerequisites fail the required jobs rather than skipping their essential checks.
 
 ## Person 4: reporting and CI
 
@@ -54,15 +73,9 @@ PYTHONPATH=src .venv/bin/python -m patch_validator report \
   --output-md /tmp/patchguard-report/SUMMARY.md
 ```
 
-The example deliberately returns **40 (Inconclusive)**: no target was executed.
 The gate uses `30 > 10 > 20 > 40 > 0`; missing completion evidence cannot pass.
 JSON retains all supplied findings, traces, correlations, and artifacts; Markdown
 summarizes findings, release/sanitized runs, reproducers, and binary hardening.
-
-`validate --config ... --base ... --patched ...` is reserved for integration and
-currently writes an explicit error report with exit 30. Build/runner/classifier
-adapters and the two-target scenario matrix remain to be connected.
-The GitHub Actions workflow runs module tests and uploads JUnit results.
 
 See [Person 4 reporting contract and remaining work](<docs/05 - Person 4 Reporting and Integration.md>).
 
