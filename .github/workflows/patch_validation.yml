@@ -15,7 +15,7 @@ jobs:
       - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc clang binutils llvm-18-tools
+          sudo apt-get install -y gcc clang binutils gdb llvm-18-tools
           python -m pip install -r requirements.txt
       - name: Run unit and compiled-fixture tests
         run: python -m pytest -q --junitxml=artifacts/tests.xml
@@ -36,7 +36,7 @@ jobs:
       - name: Install integration dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc clang binutils llvm-18-tools
+          sudo apt-get install -y gcc clang binutils gdb llvm-18-tools
           python -m pip install -r requirements.txt
       - name: Build the sandbox image
         run: docker build -t patchguard-sandbox:latest .
@@ -63,7 +63,7 @@ jobs:
       - name: Install scenario dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc clang binutils llvm-18-tools
+          sudo apt-get install -y gcc clang binutils gdb llvm-18-tools
           python -m pip install -r requirements.txt
       - name: Build the sandbox image
         run: docker build -t patchguard-sandbox:latest .

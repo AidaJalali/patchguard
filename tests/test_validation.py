@@ -199,11 +199,13 @@ def local_transport(monkeypatch):
         "runner.sandbox.DockerSandboxRunner.run_raw",
         _local_run_raw,
     )
+    monkeypatch.setattr(
+        "runner.sandbox.DockerSandboxRunner._gdb_backtrace",
+        _local_gdb_backtrace,
+    )
 
 
 def _find_symbolizer() -> str | None:
-    """ASan needs a symbolizer for the local-transport fixtures; discover it
-    across distro layouts instead of hardcoding one path."""
     import shutil
 
     candidates = (
@@ -216,6 +218,32 @@ def _find_symbolizer() -> str | None:
         if path:
             return path
     return None
+
+
+def _local_gdb_backtrace(self, artifact, config, input_bytes=None, args=None):
+    import shlex
+    import tempfile
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="patchguard_gdb_local_") as tmp:
+            input_file = Path(tmp) / "input.bin"
+            input_file.write_bytes(input_bytes if input_bytes is not None else b"")
+            argv = [
+                a.replace("/work/input.bin", str(input_file)) for a in (args or [])
+            ]
+            if config.input_mode == "stdin":
+                run_expr = "run < " + shlex.quote(str(input_file))
+            else:
+                run_expr = ("run " + " ".join(shlex.quote(a) for a in argv)).strip()
+            proc = subprocess.run(
+                ["gdb", "-batch", artifact.binary_path,
+                 "-ex", "set pagination off", "-ex", run_expr, "-ex", "bt"],
+                capture_output=True, text=True,
+                timeout=max(config.timeout_sec * 2, 10),
+            )
+            return proc.stdout + "\n" + proc.stderr
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
 
 
 def _local_run_raw(self, artifact, config, input_bytes=None, args=None):
@@ -254,7 +282,7 @@ def _run(tmp_path: Path, config: Path) -> dict:
 class TestValidatePipeline:
     def test_correct_scenario_passes(self, tmp_path, scenario_repo, local_transport):
         report = _run(tmp_path, _config(tmp_path, scenario_repo, "correct"))
-        assert report["exit_code"] == 0
+        assert report["exit_code"] == 0, report
         assert all(report[k] for k in (
             "base_bug_reproduced", "patch_fix_verified",
             "functional_tests_passed", "mandatory_checks_complete"))
@@ -267,6 +295,29 @@ class TestValidatePipeline:
         assert report["target"]["commits"]["patched_sanitized"] == scenario_repo["correct"]
         assert report["execution_settings"]["timeout_sec"] == 2.0
         assert report["execution_settings"]["build_cmd_release"]
+
+    def test_release_crash_without_backtrace_remains_inconclusive(
+            self, tmp_path, scenario_repo, local_transport, monkeypatch):
+        monkeypatch.setattr(
+            "runner.sandbox.DockerSandboxRunner._gdb_backtrace",
+            lambda *args, **kwargs: "",
+        )
+        config = _config(
+            tmp_path, scenario_repo, "correct",
+            build_cmd_release="gcc -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -O2 -o vuln vuln.c",
+        )
+        report = _run(tmp_path, config)
+        assert report["exit_code"] == 40
+        assert any(
+            finding["build_type"] == "release"
+            and finding["status"] == "Inconclusive"
+            for finding in report["findings"]
+        )
+        assert any(
+            finding["build_type"] == "sanitized"
+            and finding["status"] == "Fixed"
+            for finding in report["findings"]
+        )
 
     def test_incomplete_scenario_remains_vulnerable(self, tmp_path, scenario_repo,
                                                     local_transport):
