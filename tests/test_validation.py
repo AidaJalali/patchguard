@@ -93,6 +93,28 @@ REGRESSION_C = textwrap.dedent(
     """
 ).lstrip()
 
+NEW_ISSUE_C = textwrap.dedent(
+    """
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+
+    int main(int argc, char **argv) {
+        if (argc < 2) { fprintf(stderr, "usage\\n"); return 1; }
+        if (strcmp(argv[1], "hang") == 0) { for (;;) {} }
+        /* correct fix plus a newly introduced crash */
+        if (strlen(argv[1]) >= 8) { fprintf(stderr, "input too long\\n"); return 1; }
+        if (strcmp(argv[1], "boom") == 0) { int *p = NULL; *p = 42; }
+        char *buf = (char *)malloc(8);
+        if (!buf) return 2;
+        memcpy(buf, argv[1], strlen(argv[1]) + 1);
+        printf("ok:%s\\n", buf);
+        free(buf);
+        return 0;
+    }
+    """
+).lstrip()
+
 
 def _git(repo: Path, *args: str) -> str:
     result = subprocess.run(
@@ -113,7 +135,7 @@ def scenario_repo(tmp_path: Path) -> dict[str, str]:
     _git(repo, "commit", "-qm", "base")
     refs = {"base": _git(repo, "rev-parse", "HEAD")}
     for name, source in (("correct", CORRECT_C), ("incomplete", INCOMPLETE_C),
-                         ("regression", REGRESSION_C)):
+                         ("regression", REGRESSION_C), ("new_issue", NEW_ISSUE_C)):
         _git(repo, "checkout", "-q", "-b", name, refs["base"])
         (repo / "vuln.c").write_text(source)
         _git(repo, "add", "vuln.c")
@@ -490,6 +512,56 @@ class TestValidatePipeline:
                                 base_override="NO-SUCH-REF")
         assert report["exit_code"] == 30
         assert any("Unknown git ref" in error for error in report["errors"])
+
+    def test_saved_regressions_rerun_on_later_validation(
+            self, tmp_path, scenario_repo, local_transport):
+        config = _config(tmp_path, scenario_repo, "correct")
+        first = _run(tmp_path, config)
+        assert first["exit_code"] == 0
+        assert all(entry["stage"] == "promoted"
+                   for entry in first["regression_entries"])
+        second = _run(tmp_path, config)
+        assert second["exit_code"] == 0
+        assert any(entry["stage"] == "saved"
+                   for entry in second["regression_entries"])
+        assert all(entry["verified"]
+                   for entry in second["regression_entries"])
+
+    def test_tampered_saved_regression_blocks_validation(
+            self, tmp_path, scenario_repo, local_transport):
+        config = _config(tmp_path, scenario_repo, "correct")
+        first = _run(tmp_path, config)
+        assert first["exit_code"] == 0
+        suite = tmp_path / "out" / "regression_suite" / "auto_generated"
+        saved_input = next(
+            path for path in suite.iterdir()
+            if path.is_file() and path.name.endswith(".bin")
+        )
+        saved_input.write_bytes(b"tampered")
+        report = _run(tmp_path, config)
+        assert report["exit_code"] == 30
+        assert any("integrity check failed" in error
+                   for error in report["errors"])
+
+    def test_new_issue_promotes_patched_only_regression(
+            self, tmp_path, scenario_repo, local_transport):
+        config = _config(tmp_path, scenario_repo, "new_issue")
+        data = yaml.safe_load(config.read_text())
+        data["tests"].append({
+            "id": "new-boom", "kind": "security", "input": "boom",
+            "expected_exit_code": None, "is_valid_input": False,
+            "stdout_kind": "none",
+            "base_expect": {"crash": False, "exit_code": 0},
+            "patched_expect": {"crash": True},
+        })
+        config.write_text(yaml.safe_dump(data))
+        report = _run(tmp_path, config)
+        assert report["exit_code"] == 10
+        assert any(f["status"] == "New Issue" and "new-boom" in f["finding_id"]
+                   for f in report["findings"])
+        assert any(entry["finding_id"].startswith("new-boom")
+                   and entry["stage"] == "promoted" and entry["verified"]
+                   for entry in report["regression_entries"])
 
 
 @requires_docker

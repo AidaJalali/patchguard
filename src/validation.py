@@ -14,12 +14,14 @@ from hardening.elf_checker import HardeningError, compare_hardening, inspect_elf
 from models import (
     TestSpec,
     ValidationConfig,
+    crash_signature,
 )
 from oracle.functional_oracle import OracleExpectation, OracleError, evaluate
 from regression_gen.generator import (
     RegressionError,
     RegressionExpectation,
     VersionExpectation,
+    load_regression_suite,
     promote_to_regression_suite,
     verify_manifest_entry,
 )
@@ -159,6 +161,22 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
     functional_total = 0
     functional_failures = []
 
+    for entry, content in load_regression_suite(f"{cfg.output_dir}/regression_suite"):
+        if entry.build_type not in BUILD_TYPES or entry.input_mode != cfg.target.input_mode:
+            raise RegressionError(f"saved regression context is incompatible: {entry.finding_id}")
+        try:
+            base_test_id = entry.expected["base"]["test_id"]
+            patched_test_id = entry.expected["patched"]["test_id"]
+        except (KeyError, TypeError) as exc:
+            raise RegressionError(f"saved regression is missing test provenance: {entry.finding_id}") from exc
+        if not base_test_id or base_test_id != patched_test_id:
+            raise RegressionError(f"saved regression has inconsistent test provenance: {entry.finding_id}")
+        adapter = TargetRunnerAdapter(
+            artifacts, cfg.target, test_id=base_test_id, argv_template=entry.argv_template,
+        )
+        verified = verify_manifest_entry(adapter, entry, content, timeout_sec=cfg.target.timeout_sec)
+        data["regression_entries"].append(_regression_record(entry, verified, "saved"))
+
     for spec in cfg.tests:
         adapter = TargetRunnerAdapter(
             artifacts,
@@ -263,9 +281,13 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
                 continue
             data["findings"].append(finding.to_dict())
 
-            if base_artifact is not None and not base_artifact.is_flaky:
+            eligible = next((
+                artifact for artifact in (base_artifact, patched_artifact)
+                if artifact is not None and not artifact.is_flaky
+            ), None)
+            if eligible is not None:
                 _promote_regression(
-                    spec, base_artifact, adapter, cfg, data["regression_entries"]
+                    spec, eligible, adapter, cfg, data["regression_entries"], base, patched,
                 )
 
     data["base_bug_reproduced"] = any(
@@ -325,11 +347,16 @@ def _crash_evidence(finding_id, spec, result, build_type, cfg, adapter, artifact
     return replay, artifact
 
 
-def _promote_regression(spec, artifact, adapter, cfg, regression_entries):
+def _promote_regression(spec, artifact, adapter, cfg, regression_entries, base, patched):
     expectation = RegressionExpectation(
-        base=_expectation_from_dict(spec.base_expect),
-        patched=_expectation_from_dict(spec.patched_expect),
+        base=_expectation_from_dict(spec.base_expect) if spec.base_expect is not None else
+        VersionExpectation(crash=base.crashed, exit_code=None if base.crashed else spec.expected_exit_code),
+        patched=_expectation_from_dict(spec.patched_expect) if spec.patched_expect is not None else
+        VersionExpectation(crash=patched.crashed, exit_code=None if patched.crashed else spec.expected_exit_code),
     )
+    for expected, result in ((expectation.base, base), (expectation.patched, patched)):
+        if expected.crash:
+            expected.signature = crash_signature(result)
     entry = promote_to_regression_suite(
         artifact, expectation, suite_root=f"{cfg.output_dir}/regression_suite",
         replace=True,
@@ -338,14 +365,20 @@ def _promote_regression(spec, artifact, adapter, cfg, regression_entries):
     verified = verify_manifest_entry(
         adapter, entry, minimized, timeout_sec=cfg.target.timeout_sec
     )
-    record = {"finding_id": entry.finding_id, "verified": verified.ok}
+    regression_entries.append(_regression_record(entry, verified, "promoted"))
+
+
+def _regression_record(entry, verified, stage):
+    record = {"finding_id": entry.finding_id, "verified": verified.ok, "stage": stage,
+              "build_type": entry.build_type,
+              "outcomes": [asdict(verified.base), asdict(verified.patched)]}
     if not verified.ok:
         record["reasons"] = [
             {"version": outcome.version, "reason": outcome.reason}
             for outcome in (verified.base, verified.patched)
             if not outcome.ok
         ]
-    regression_entries.append(record)
+    return record
 
 
 def _expectation_from_dict(data: dict | None) -> VersionExpectation:

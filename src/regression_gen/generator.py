@@ -341,6 +341,30 @@ def verify_regression(
     )
 
 
+def load_regression_suite(suite_root: str | Path) -> list[tuple[ManifestEntry, bytes]]:
+    directory = Path(suite_root) / AUTO_GENERATED_DIR
+    manifest = _load_manifest(directory / MANIFEST_NAME)
+    entries = []
+    for finding_id, row in manifest["entries"].items():
+        _validate_finding_id(finding_id)
+        try:
+            entry = ManifestEntry.from_dict(row)
+        except (TypeError, ValueError) as exc:
+            raise RegressionError(f"invalid saved regression {finding_id}: {exc}") from exc
+        if entry.finding_id != finding_id:
+            raise RegressionError(f"saved regression key does not match finding ID: {finding_id}")
+        if not isinstance(entry.input_path, str) or Path(entry.input_path).name != entry.input_path:
+            raise RegressionError(f"invalid saved regression input path: {finding_id}")
+        path = directory / entry.input_path
+        if path.is_symlink() or not path.is_file():
+            raise RegressionError(f"saved regression input must be a regular non-symlink file: {path}")
+        content = path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != entry.input_sha256:
+            raise RegressionError(f"saved regression input integrity check failed: {finding_id}")
+        entries.append((entry, content))
+    return entries
+
+
 def verify_manifest_entry(
     runner: RunnerPort,
     entry: ManifestEntry,

@@ -22,6 +22,7 @@ from regression_gen.generator import (
     RegressionExpectation,
     VerificationReport,
     VersionExpectation,
+    load_regression_suite,
     promote_to_regression_suite,
     verify_manifest_entry,
     verify_regression,
@@ -982,6 +983,59 @@ class TestVerifyRegressionContextEnforcement:
         with pytest.raises(RegressionError, match="missing expected test provenance"):
             verify_regression(runner, b"PWN", expectation, build_type="sanitized")
         assert runner.calls == []
+
+
+class TestLoadRegressionSuite:
+    def test_loads_saved_entries_with_content(self, tmp_path):
+        artifact = write_bundle(tmp_path)
+        entry = promote_to_regression_suite(
+            artifact, DEFAULT_EXPECTATION, suite_root=tmp_path / "suite"
+        )
+        loaded = load_regression_suite(tmp_path / "suite")
+        assert len(loaded) == 1
+        loaded_entry, content = loaded[0]
+        assert loaded_entry.finding_id == entry.finding_id
+        assert content == b"PWN"
+        assert loaded_entry.input_sha256 == hashlib.sha256(content).hexdigest()
+
+    def test_empty_suite_loads_cleanly(self, tmp_path):
+        assert load_regression_suite(tmp_path / "suite") == []
+
+    def test_tampered_saved_input_rejected(self, tmp_path):
+        artifact = write_bundle(tmp_path)
+        entry = promote_to_regression_suite(
+            artifact, DEFAULT_EXPECTATION, suite_root=tmp_path / "suite"
+        )
+        input_path = tmp_path / "suite" / "auto_generated" / entry.input_path
+        input_path.write_bytes(b"tampered")
+        with pytest.raises(RegressionError, match="integrity check failed"):
+            load_regression_suite(tmp_path / "suite")
+
+    def test_symlinked_saved_input_rejected(self, tmp_path):
+        artifact = write_bundle(tmp_path)
+        entry = promote_to_regression_suite(
+            artifact, DEFAULT_EXPECTATION, suite_root=tmp_path / "suite"
+        )
+        input_path = tmp_path / "suite" / "auto_generated" / entry.input_path
+        decoy = tmp_path / "decoy.bin"
+        decoy.write_bytes(b"PWN")
+        input_path.unlink()
+        os.symlink(decoy, input_path)
+        with pytest.raises(RegressionError, match="non-symlink"):
+            load_regression_suite(tmp_path / "suite")
+
+    def test_key_id_mismatch_rejected(self, tmp_path):
+        artifact = write_bundle(tmp_path)
+        promote_to_regression_suite(
+            artifact, DEFAULT_EXPECTATION, suite_root=tmp_path / "suite"
+        )
+        manifest_path = tmp_path / "suite" / "auto_generated" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        row = manifest["entries"].pop("f1")
+        manifest["entries"]["other"] = row
+        manifest_path.write_text(json.dumps(manifest))
+        with pytest.raises(RegressionError, match="does not match finding ID"):
+            load_regression_suite(tmp_path / "suite")
 
 
 class TestManifestEntryRoundTrip:
