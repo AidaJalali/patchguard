@@ -42,4 +42,4 @@ docker build -t patchguard-sandbox:latest .
 
 The CI Docker job builds the image and runs Person 1 plus cross-module integration tests separately. During local integration, downloading the Ubuntu image failed with a registry HTTP 403. The four container tests were therefore skipped, not claimed as passing; the host-compiled cross-module test ran successfully.
 
-The complete `validate` command and two-target scenario matrix remain pending. Importing/merging the modules does not complete that orchestration automatically.
+The complete `validate` command and the two-target scenario matrix are implemented and verified in `src/validation.py` and `run_all_scenarios.sh`; see docs 09 and 10 for setup, schema, and the verified scenario results.

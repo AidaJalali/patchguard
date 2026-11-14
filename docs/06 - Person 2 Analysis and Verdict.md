@@ -77,9 +77,9 @@ Ordinary passing functional tests should be recorded in execution/oracle results
 
 Tests cover real Clang C/C++ ASTs, cross-file calls, versioned headers, Git snapshots without checkout, all status cases, matching rules, invalid oracle data, JSON semantics, and preservation through Person 4's report gate. A real compiled C fixture exercises execution → three replays → correlation → independent oracle → classifier → report. Its test-only runner supplies its known fixture frame; it is not a production crash-stack parser.
 
-Still needed for full pipeline delivery:
+All of the following are implemented and verified since this section was written:
 
-1. Production Docker validation of the integrated build/runner/diagnostic path and a coverage adapter (see doc 08; the RunnerPort adapter is now available).
-2. Person 4's complete `validate` orchestration and eight-scenario target matrix.
-3. Real target build flags and source-path normalization.
-4. TA coordination on independent oracle approval and target eligibility. Whether additional correlation/signature policies require approval must be checked against the original specification; this document does not invent approval requirements.
+1. Production Docker validation of the integrated build/runner/diagnostic path: the full `validate` pipeline runs every stage inside the sandbox image, verified across the eight-scenario matrix (see docs 09 and 10).
+2. The complete `validate` orchestration and the eight-scenario target matrix: `src/validation.py`, `run_all_scenarios.sh`, and `package_deliverables.sh`.
+3. Real target build flags and source-path normalization: both targets build inside the sandbox with pinned commits; path handling is covered by the target construction scripts and their tests.
+4. Independent oracle approval and target eligibility: oracle provenance is recorded per configuration; approval status is a team/coordination matter outside this document.

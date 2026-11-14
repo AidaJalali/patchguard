@@ -37,7 +37,11 @@ functional oracle is recorded with its provenance.
 
 ## Quick start
 
+Host prerequisites: Python 3.12, Docker, and the C toolchain used outside the
+sandbox image by the tests and the source analyzer:
+
 ```bash
+sudo apt-get install -y gcc clang binutils gdb llvm-18-tools
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt   # pyelftools, pytest, pyyaml
 docker build -t patchguard-sandbox:latest . # network needed once

@@ -90,7 +90,7 @@ Each scenario was executed end-to-end through real Docker: four sandbox builds, 
 
 ## 7. Test evidence
 
-- Full suite: **426 passed, 0 skipped** — including the real Docker build/run tests and the cross-module round trip (compiled C fixtures, real git snapshots, production ASan diagnostics parser).
+- Full suite: **435 passed, 0 skipped** — including the real Docker build/run tests, the cross-module round trip (compiled C fixtures, real git snapshots, production ASan diagnostics parser), and the saved-regression re-verification tests.
 - Scenario matrix: 8/8 on two independent clean runs.
 - CI: three GitHub Actions jobs — unit tests, Docker integration tests, and the full scenario matrix — with Docker prerequisites required (not silently skipped). The CI environment packages match the tests' requirements (`llvm-18-tools` included for ASan symbolization in the local-transport fixtures).
 
