@@ -132,7 +132,7 @@ input_mode: stdin
 timeout_sec: 5.0
 memory_mb: 256
 cpus: 1.0
-oracle_source: "upstream cJSON behavior verified against the pinned commits; illustrative expectations require TA approval as an independent reference"
+oracle_source: "upstream cJSON behavior verified against the pinned commits; expected behavior is specified independently of patched output"
 work_dir: .work/cjson-target
 output_dir: outputs/cjson-target/$name
 tests:

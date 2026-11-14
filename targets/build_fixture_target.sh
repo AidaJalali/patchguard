@@ -166,7 +166,7 @@ argv_template: ["{input}"]
 timeout_sec: 3.0
 memory_mb: 256
 cpus: 1.0
-oracle_source: "illustrative fixture expectations designed by the team - requires TA approval as an independent reference"
+oracle_source: "fixture expectations designed by the team, specified independently of patched output"
 work_dir: .work/fixture-target
 output_dir: outputs/fixture-target/$name
 tests:
