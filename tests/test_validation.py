@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import resource
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -225,6 +227,12 @@ def local_transport(monkeypatch):
         "runner.sandbox.DockerSandboxRunner._gdb_backtrace",
         _local_gdb_backtrace,
     )
+    core_limits = resource.getrlimit(resource.RLIMIT_CORE)
+    resource.setrlimit(resource.RLIMIT_CORE, (0, core_limits[1]))
+    try:
+        yield
+    finally:
+        resource.setrlimit(resource.RLIMIT_CORE, core_limits)
 
 
 def _find_symbolizer() -> str | None:
@@ -276,21 +284,56 @@ def _local_run_raw(self, artifact, config, input_bytes=None, args=None):
     }
     if symbolizer:
         env["ASAN_SYMBOLIZER_PATH"] = symbolizer
-    result = subprocess.run(
-        [artifact.binary_path, *args],
-        capture_output=True,
-        timeout=config.timeout_sec,
-        env=env,
-    )
+    timed_out = False
+    try:
+        result = subprocess.run(
+            [artifact.binary_path, *(args or [])],
+            capture_output=True,
+            timeout=config.timeout_sec,
+            env=env,
+        )
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        result = subprocess.CompletedProcess(
+            exc.cmd, 124, stdout=exc.stdout or b"", stderr=exc.stderr or b"",
+        )
     return dict(
         exit_code=result.returncode,
         stdout=result.stdout.decode(),
         stderr=result.stderr.decode(),
-        timed_out=False,
+        timed_out=timed_out,
         oom_killed=False,
         duration_ms=0,
         cli_command=artifact.binary_path,
     )
+
+
+def test_local_transport_timeout_preserves_partial_diagnostics():
+    result = _local_run_raw(
+        None,
+        SimpleNamespace(binary_path=sys.executable),
+        SimpleNamespace(timeout_sec=0.5),
+        args=["-c", "import sys, time; print('started', flush=True); "
+              "print('diagnostic', file=sys.stderr, flush=True); time.sleep(30)"],
+    )
+    assert result["timed_out"] is True
+    assert result["exit_code"] == 124
+    assert result["stdout"] == "started\n"
+    assert result["stderr"] == "diagnostic\n"
+    assert result["oom_killed"] is False
+
+
+def test_local_transport_disables_core_dumps(local_transport):
+    result = _local_run_raw(
+        None,
+        SimpleNamespace(binary_path=sys.executable),
+        SimpleNamespace(timeout_sec=2),
+        args=["-c", "import resource; "
+              "print(resource.getrlimit(resource.RLIMIT_CORE)[0])"],
+    )
+    assert result["exit_code"] == 0
+    assert result["stdout"] == "0\n"
+    assert result["timed_out"] is False
 
 
 def _run(tmp_path: Path, config: Path) -> dict:
