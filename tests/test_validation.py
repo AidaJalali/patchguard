@@ -201,16 +201,36 @@ def local_transport(monkeypatch):
     )
 
 
+def _find_symbolizer() -> str | None:
+    """ASan needs a symbolizer for the local-transport fixtures; discover it
+    across distro layouts instead of hardcoding one path."""
+    import shutil
+
+    candidates = (
+        "llvm-symbolizer-18",
+        "llvm-symbolizer",
+        "/usr/lib/llvm-18/bin/llvm-symbolizer",
+    )
+    for candidate in candidates:
+        path = shutil.which(candidate)
+        if path:
+            return path
+    return None
+
+
 def _local_run_raw(self, artifact, config, input_bytes=None, args=None):
+    symbolizer = _find_symbolizer()
+    env = {
+        "ASAN_OPTIONS": "detect_leaks=0:symbolize=1",
+        "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
+    }
+    if symbolizer:
+        env["ASAN_SYMBOLIZER_PATH"] = symbolizer
     result = subprocess.run(
         [artifact.binary_path, *args],
         capture_output=True,
         timeout=config.timeout_sec,
-        env={
-            "ASAN_OPTIONS": "detect_leaks=0:symbolize=1",
-            "ASAN_SYMBOLIZER_PATH": "/usr/bin/llvm-symbolizer-18",
-            "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
-        },
+        env=env,
     )
     return dict(
         exit_code=result.returncode,
@@ -241,6 +261,12 @@ class TestValidatePipeline:
         assert any(f["status"] == "Fixed" for f in report["findings"])
         assert report["reproducers"]
         assert all(entry["verified"] for entry in report["regression_entries"])
+        assert report["target"]["base_ref"] == scenario_repo["base"]
+        assert report["target"]["patched_ref"] == scenario_repo["correct"]
+        assert report["target"]["commits"]["base_release"] == scenario_repo["base"]
+        assert report["target"]["commits"]["patched_sanitized"] == scenario_repo["correct"]
+        assert report["execution_settings"]["timeout_sec"] == 2.0
+        assert report["execution_settings"]["build_cmd_release"]
 
     def test_incomplete_scenario_remains_vulnerable(self, tmp_path, scenario_repo,
                                                     local_transport):

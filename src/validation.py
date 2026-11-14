@@ -96,6 +96,29 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
     data = {
         "target_name": cfg.target.target_name,
         "oracle_source": cfg.oracle_source,
+        "target": {
+            "target_name": cfg.target.target_name,
+            "repo_path": cfg.target.repo_path,
+            "base_ref": cfg.target.base_ref,
+            "patched_ref": cfg.target.patched_ref,
+            "input_mode": cfg.target.input_mode,
+            "argv_template": cfg.argv_template,
+            "binary_rel_path": cfg.target.binary_rel_path,
+            "commits": {
+                "base_release": "",
+                "base_sanitized": "",
+                "patched_release": "",
+                "patched_sanitized": "",
+            },
+        },
+        "execution_settings": {
+            "build_cmd_release": cfg.target.build_cmd_release,
+            "build_cmd_sanitized": cfg.target.build_cmd_sanitized,
+            "timeout_sec": cfg.target.timeout_sec,
+            "memory_mb": cfg.target.memory_mb,
+            "cpus": cfg.target.cpus,
+            "env_vars": cfg.target.env_vars,
+        },
         "findings": [],
         "executions": [],
         "reproducers": [],
@@ -114,6 +137,12 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
 
     builder = DualBuilder()
     artifacts = builder.build_all(cfg.target, cfg.work_dir)
+
+    for version in ("base", "patched"):
+        for build_type in BUILD_TYPES:
+            data["target"]["commits"][f"{version}_{build_type}"] = artifacts[
+                (version, build_type)
+            ].commit_hash
 
     base_release = inspect_elf(artifacts[("base", "release")].binary_path)
     patched_release = inspect_elf(artifacts[("patched", "release")].binary_path)
