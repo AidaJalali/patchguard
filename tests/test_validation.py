@@ -594,7 +594,7 @@ class TestValidatePipeline:
             "id": "new-boom", "kind": "security", "input": "boom",
             "expected_exit_code": None, "is_valid_input": False,
             "stdout_kind": "none",
-            "base_expect": {"crash": False, "exit_code": 0},
+            "base_expect": {"crash": False, "exit_code": 0, "stdout_kind": "exact", "stdout_value": "ok:boom\n"},
             "patched_expect": {"crash": True},
         })
         config.write_text(yaml.safe_dump(data))

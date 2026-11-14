@@ -219,7 +219,7 @@ def test_all_members_round_trip_with_real_compiler_and_diagnostics(
     entry = promote_to_regression_suite(
         bundle,
         RegressionExpectation(
-            VersionExpectation(True), VersionExpectation(False, exit_code=1)
+            VersionExpectation(True), VersionExpectation(False, exit_code=1, stdout_kind="exact", stdout_value="", stderr_pattern="input too long")
         ),
         suite_root=tmp_path / "suite",
     )

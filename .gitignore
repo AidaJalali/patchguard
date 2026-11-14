@@ -17,6 +17,7 @@ venv/
 tmp/
 .DS_Store
 outputs/
+.regressions/
 targets/fixture_target/
 targets/cjson_target/
 targets/configs/

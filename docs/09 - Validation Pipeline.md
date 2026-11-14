@@ -27,7 +27,7 @@ PYTHONPATH=src .venv/bin/python -m patch_validator validate \
   --output-json /tmp/pg-out/report.json --output-md /tmp/pg-out/SUMMARY.md
 ```
 
-`--base`/`--patched` are accepted for CLI compatibility; the refs come from the config file.
+`--base`/`--patched` override the corresponding refs in the configuration. Omitting them uses the configured refs.
 
 ## Configuration schema
 
@@ -37,17 +37,27 @@ PYTHONPATH=src .venv/bin/python -m patch_validator validate \
 | --- | --- |
 | `target_name`, `repo_path`, `base_ref`, `patched_ref` | target identity; refs must exist in `repo_path` (a git repo) |
 | `build_cmd_release`, `build_cmd_sanitized` | shell commands run inside the sandbox image with `CFLAGS/CXXFLAGS/LDFLAGS` exported (`-O2` / ASan+UBSan) |
+| `analysis_args` | optional Clang arguments such as `["-Iinclude", "-DFEATURE=1", "-std=c11"]`; required include paths/defines must be supplied for source analysis as well as compilation |
 | `binary_rel_path` | produced ELF, relative to the build dir |
 | `input_mode` | `stdin` / `file` / `args` |
 | `argv_template` | optional; exactly one `{input}` placeholder for file/args modes, none for stdin |
 | `timeout_sec`, `memory_mb`, `cpus`, `env_vars` | resource limits and recorded environment |
 | `oracle_source` | required provenance record of where expected behavior comes from |
 | `work_dir`, `output_dir` | build artifacts and reports/reproducers/regression suite; must not live inside the target repo |
+| `regression_suite_dir` | optional persistent suite directory, defaulting to `output_dir/regression_suite`; generated scenario configs use `.regressions/<target>/<scenario>` |
 | `tests` | see below |
 
 Relative paths in the config resolve against the invocation working directory.
 
+Source and work/output paths must not overlap in either direction. The regression suite must not overlap source or work paths. A validation must contain all three test categories and include both valid and invalid inputs. Invalid or incomplete suites are rejected before building.
+
 Each test: `id` (unique), `kind` (`functional`/`boundary`/`security`), `input` (string) or `input_hex`, `expected_exit_code` (integer or null), `is_valid_input`, `stdout_kind` (`exact`/`regex`/`json`/`none`), `stdout_value`, `stderr_pattern`. Security tests require explicit `base_expect`/`patched_expect` (`{crash: bool, exit_code?: int}`), which also drive regression promotion. Rejections happen before any build or execution: malformed types, duplicate test IDs, invalid templates, unsafe output/input collisions, missing files.
+
+Generated regressions use manifest format 2. Every clean-run expectation includes an independent stdout oracle and an optional stderr pattern, evaluated on the minimized input and in later runs. A clean version-specific expectation can override the test-level output fields with `stdout_kind`, `stdout_value`, and `stderr_pattern` inside `base_expect` or `patched_expect`. When `expected_exit_code` is null, provide these version-specific fields for a clean side; output is never inferred from the patched execution. Format 1 suites lack this evidence and are rejected: regenerate them rather than editing the format number.
+
+Builds resolve the sandbox tag to an immutable local image ID and record the full build command and image environment. Production bundles include `replay.py`; `reproduce.sh [minimized]` uses the recorded image, shell, input mode, target environment, timeout, memory/CPU/pids limits and disabled network. On another host, load the packaged runtime first with `docker load -i delivery/sandbox-images.tar`. Target binaries are hash-checked before replay. Low-level library callers creating bundles without a sandbox image retain native replay and must provide their own compatible execution environment.
+
+CI restores format 2 suites from its branch-scoped cache before scenarios run and saves the verified suites after success. Reports, reproducer bundles and suites are all uploaded as artifacts. Saved suites use relative input paths and are tested after relocation to a fresh workspace, including re-promotion without reliance on old source-bundle paths.
 
 ## Targets and provenance
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import subprocess
 from pathlib import Path, PurePosixPath
@@ -8,6 +9,7 @@ from typing import Dict, List, Tuple
 
 from exceptions import ConfigOrBuildError
 from models import BuildArtifact, BuildType, TargetConfig, VersionType
+from paths import paths_overlap
 
 SANITIZED_FLAGS = "-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1"
 RELEASE_FLAGS = "-O2"
@@ -31,6 +33,8 @@ class DualBuilder:
     ) -> None:
         self.image = image
         self.docker_bin = docker_bin
+        self.image_env: dict[str, str] = {}
+        self.image_pinned = False
 
     def build_all(
         self,
@@ -38,6 +42,7 @@ class DualBuilder:
         work_dir: str,
     ) -> Dict[Tuple[VersionType, BuildType], BuildArtifact]:
         work = Path(work_dir).resolve()
+        self._check_workspace(config, work)
         work.mkdir(parents=True, exist_ok=True)
 
         commit_hashes = self._prepare_checkouts(config, work)
@@ -64,6 +69,7 @@ class DualBuilder:
         config: TargetConfig,
         work: Path,
     ) -> Dict[VersionType, str]:
+        self._check_workspace(config, work)
         repo = Path(config.repo_path).resolve()
         if not repo.is_dir():
             raise ConfigOrBuildError(
@@ -89,6 +95,13 @@ class DualBuilder:
                     message=f"Failed to extract {version} ref '{ref}': {exc}",
                 ) from exc
         return hashes
+
+    @staticmethod
+    def _check_workspace(config: TargetConfig, work: Path) -> None:
+        if paths_overlap(config.repo_path, work):
+            raise ConfigOrBuildError(
+                code=30, message="work_dir must not overlap the target repository",
+            )
 
     def _extract_ref(self, repo: Path, ref: str, dest: Path) -> str:
 
@@ -228,10 +241,24 @@ class DualBuilder:
             binary_sha256=digest,
             compile_flags=compile_flags,
             build_dir=str(build_dir.resolve()),
+            build_command=inner,
+            sandbox_image=self.image if self.image_pinned else None,
+            sandbox_env=dict(self.image_env),
         )
 
     def _docker_build(self, build_dir: Path, shell_cmd: str) -> None:
-
+        if not self.image_pinned:
+            try:
+                inspected = subprocess.run(
+                    [self.docker_bin, "image", "inspect", self.image],
+                    capture_output=True, text=True, timeout=30, check=True,
+                )
+                info = json.loads(inspected.stdout)[0]
+                self.image = info["Id"]
+                self.image_env = dict(value.split("=", 1) for value in info["Config"].get("Env", []) if "=" in value)
+                self.image_pinned = True
+            except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError, TypeError) as exc:
+                raise ConfigOrBuildError(code=30, message=f"Cannot pin sandbox image: {exc}") from exc
         host_build = str(build_dir.resolve())
 
         mount_src = self._docker_path(host_build)

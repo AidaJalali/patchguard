@@ -120,7 +120,9 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
             "memory_mb": cfg.target.memory_mb,
             "cpus": cfg.target.cpus,
             "env_vars": cfg.target.env_vars,
+            "analysis_args": cfg.target.analysis_args,
         },
+        "oracle_results": [],
         "findings": [],
         "executions": [],
         "reproducers": [],
@@ -145,6 +147,8 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
             data["target"]["commits"][f"{version}_{build_type}"] = artifacts[
                 (version, build_type)
             ].commit_hash
+    data["execution_settings"]["sandbox_image"] = artifacts[("base", "release")].sandbox_image
+    data["execution_settings"]["image_env"] = dict(artifacts[("base", "release")].sandbox_env)
 
     base_release = inspect_elf(artifacts[("base", "release")].binary_path)
     patched_release = inspect_elf(artifacts[("patched", "release")].binary_path)
@@ -154,14 +158,17 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
         for delta in compare_hardening(base_release, patched_release)
     ]
 
-    patch = analyze_git(cfg.target.repo_path, cfg.target.base_ref, cfg.target.patched_ref)
+    patch = analyze_git(
+        cfg.target.repo_path, cfg.target.base_ref, cfg.target.patched_ref,
+        compile_args=tuple(cfg.target.analysis_args),
+    )
     if patch.diagnostics:
         raise ConfigOrBuildError(code=30, message=f"source analysis failed: {'; '.join(patch.diagnostics)}")
 
     functional_total = 0
     functional_failures = []
 
-    for entry, content in load_regression_suite(f"{cfg.output_dir}/regression_suite"):
+    for entry, content in load_regression_suite(cfg.regression_suite_dir or f"{cfg.output_dir}/regression_suite"):
         if entry.build_type not in BUILD_TYPES or entry.input_mode != cfg.target.input_mode:
             raise RegressionError(f"saved regression context is incompatible: {entry.finding_id}")
         try:
@@ -203,6 +210,7 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
 
             base_oracle = evaluate(base, oracle) if oracle else None
             patched_oracle = evaluate(patched, oracle) if oracle else None
+            data["oracle_results"].extend(asdict(value) for value in (base_oracle, patched_oracle) if value)
 
             if spec.kind in ("security", "boundary"):
                 if base.timed_out or base.oom_killed or patched.timed_out or patched.oom_killed:
@@ -301,6 +309,8 @@ def _run_pipeline(cfg: ValidationConfig, output_json, output_md, state=None) -> 
 
     data["mandatory_checks_complete"] = (
         not data["evidence_gaps"]
+        and {test.kind for test in cfg.tests} == {"functional", "boundary", "security"}
+        and len(data["executions"]) == len(cfg.tests) * 4
         and all(entry["verified"] for entry in data["regression_entries"])
     )
     return write_reports(data, output_json, output_md)
@@ -341,9 +351,17 @@ def _crash_evidence(finding_id, spec, result, build_type, cfg, adapter, artifact
         base_commit_hash=artifacts[("base", build_type)].commit_hash,
         patched_commit_hash=artifacts[("patched", build_type)].commit_hash,
         compile_flags=artifacts[(result.version, build_type)].compile_flags,
-        env_vars=cfg.target.env_vars,
+        env_vars={**artifacts[(result.version, build_type)].sandbox_env, **cfg.target.env_vars},
+        configured_env=dict(cfg.target.env_vars),
+        sandbox_image=artifacts[(result.version, build_type)].sandbox_image,
+        build_command=artifacts[(result.version, build_type)].build_command,
+        timeout_sec=cfg.target.timeout_sec,
+        memory_mb=cfg.target.memory_mb,
+        cpus=cfg.target.cpus,
     )
-    artifact = build_reproducer(context, adapter, output_root=output_root)
+    artifact = build_reproducer(
+        context, adapter, output_root=output_root, timeout_sec=cfg.target.timeout_sec,
+    )
     return replay, artifact
 
 
@@ -357,11 +375,21 @@ def _promote_regression(spec, artifact, adapter, cfg, regression_entries, base, 
     for expected, result in ((expectation.base, base), (expectation.patched, patched)):
         if expected.crash:
             expected.signature = crash_signature(result)
+        else:
+            source = spec.base_expect if result.version == "base" else spec.patched_expect
+            if source and "stdout_kind" in source:
+                expected.stdout_kind = "exact" if source["stdout_kind"] == "none" else source["stdout_kind"]
+                expected.stdout_value = "" if source["stdout_kind"] == "none" else source.get("stdout_value")
+                expected.stderr_pattern = source.get("stderr_pattern")
+            elif spec.expected_exit_code is not None:
+                expected.stdout_kind = "exact" if spec.stdout_kind == "none" else spec.stdout_kind
+                expected.stdout_value = "" if spec.stdout_kind == "none" else spec.stdout_value
+                expected.stderr_pattern = spec.stderr_pattern
     entry = promote_to_regression_suite(
-        artifact, expectation, suite_root=f"{cfg.output_dir}/regression_suite",
+        artifact, expectation, suite_root=cfg.regression_suite_dir or f"{cfg.output_dir}/regression_suite",
         replace=True,
     )
-    minimized = Path(entry.source_bundle, "minimized_input.bin").read_bytes()
+    minimized = Path(artifact.minimized_input_path).read_bytes()
     verified = verify_manifest_entry(
         adapter, entry, minimized, timeout_sec=cfg.target.timeout_sec
     )

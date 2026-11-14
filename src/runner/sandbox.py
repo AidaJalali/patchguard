@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import json
 import shlex
 import subprocess
 import tempfile
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from diagnostics.parser import DiagnosticsParser
+from exceptions import ConfigOrBuildError
 from models import BuildArtifact, ExecutionResult, TargetConfig
 
 DEFAULT_IMAGE = "patchguard-sandbox:latest"
@@ -167,7 +169,6 @@ class DockerSandboxRunner:
         cmd = [
             self.docker_bin,
             "run",
-            "--rm",
             "--network",
             "none",
             f"--memory={config.memory_mb}m",
@@ -225,33 +226,33 @@ class DockerSandboxRunner:
         stderr = ""
 
         try:
-            proc = subprocess.run(
-                named_cmd,
-                input=stdin_bytes,
-                capture_output=True,
-                timeout=timeout_sec,
-            )
-            exit_code = proc.returncode
-            stdout = (
-                proc.stdout.decode("utf-8", errors="replace") if proc.stdout else ""
-            )
-            stderr = (
-                proc.stderr.decode("utf-8", errors="replace") if proc.stderr else ""
-            )
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            stdout = exc.stdout.decode("utf-8", errors="replace") if exc.stdout else ""
-            stderr = exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
-            self._docker_kill(container_name)
-            exit_code = 124
-        except FileNotFoundError:
-            raise
+            try:
+                proc = subprocess.run(
+                    named_cmd, input=stdin_bytes, capture_output=True, timeout=timeout_sec,
+                )
+                exit_code = proc.returncode
+                stdout = proc.stdout.decode("utf-8", errors="replace") if proc.stdout else ""
+                stderr = proc.stderr.decode("utf-8", errors="replace") if proc.stderr else ""
+            except subprocess.TimeoutExpired as exc:
+                timed_out = True
+                stdout = exc.stdout.decode("utf-8", errors="replace") if exc.stdout else ""
+                stderr = exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
+                self._docker_kill(container_name)
+                exit_code = 124
+
+            state = self._container_state(container_name)
+            if state.get("Error") or state.get("Status") not in ("exited", "dead") or str(state.get("StartedAt", "0001")).startswith("0001"):
+                raise ConfigOrBuildError(code=30, message=f"Docker target did not execute: {stderr or state}")
+            if not timed_out and state.get("ExitCode") != exit_code:
+                raise ConfigOrBuildError(code=30, message=f"Docker transport failed: {stderr or exit_code}")
+            oom_killed = state.get("OOMKilled") is True
+        finally:
+            try:
+                subprocess.run([self.docker_bin, "rm", "-f", container_name], capture_output=True, timeout=10)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
 
         duration_ms = int((time.monotonic() - started) * 1000)
-
-        oom_killed = self._check_oom(container_name, exit_code)
-        if exit_code == 137:
-            oom_killed = True
 
         return {
             "exit_code": exit_code,
@@ -264,31 +265,35 @@ class DockerSandboxRunner:
         }
 
     def _docker_kill(self, name: str) -> None:
-        subprocess.run(
-            [self.docker_bin, "kill", name],
-            capture_output=True,
-            timeout=30,
-        )
+        try:
+            subprocess.run(
+                [self.docker_bin, "kill", name], capture_output=True, timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ConfigOrBuildError(code=30, message=f"Cannot stop timed-out container: {exc}") from exc
 
-    def _check_oom(self, name: str, exit_code: int) -> bool:
-        if exit_code == 137:
-            return True
+    def _container_state(self, name: str) -> dict:
         try:
             result = subprocess.run(
                 [
                     self.docker_bin,
                     "inspect",
                     "--format",
-                    "{{.State.OOMKilled}}",
+                    "{{json .State}}",
                     name,
                 ],
                 capture_output=True,
                 text=True,
                 timeout=10,
             )
-            return result.stdout.strip().lower() == "true"
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            return False
+            if result.returncode != 0:
+                raise ConfigOrBuildError(code=30, message=f"Docker launch/state inspection failed: {result.stderr.strip()}")
+            state = json.loads(result.stdout)
+            if not isinstance(state, dict):
+                raise ValueError("container state is not an object")
+            return state
+        except (subprocess.SubprocessError, OSError, ValueError) as exc:
+            raise ConfigOrBuildError(code=30, message=f"Cannot establish Docker execution state: {exc}") from exc
 
     def _looks_like_crash(self, exit_code: int, stderr: str) -> bool:
         if exit_code < 0 or exit_code >= 128:
@@ -318,20 +323,16 @@ class DockerSandboxRunner:
             work = self._docker_path(str(tmp_path.resolve()))
             bin_name = binary.name
 
+            run_expression = f"run {run_args}"
             if config.input_mode == "stdin":
-                gdb_script = (
-                    f"cp /artifact/{shlex.quote(bin_name)} /tmp/binary && chmod +x /tmp/binary; "
-                    f"gdb -batch -ex 'set pagination off' "
-                    f"-ex 'run {run_args} < /work/input.bin' "
-                    f"-ex 'bt' --args /tmp/binary"
-                )
-            else:
-                gdb_script = (
-                    f"cp /artifact/{shlex.quote(bin_name)} /tmp/binary && chmod +x /tmp/binary; "
-                    f"gdb -batch -ex 'set pagination off' "
-                    f"-ex 'run {run_args}' "
-                    f"-ex 'bt' --args /tmp/binary {run_args}"
-                )
+                run_expression += " < /work/input.bin"
+            wrapper = shlex.join(["/usr/bin/env", *[f"{k}={v}" for k, v in config.env_vars.items()]])
+            gdb_command = shlex.join([
+                "gdb", "-batch", "-ex", "set pagination off",
+                "-ex", "set exec-wrapper " + wrapper,
+                "-ex", run_expression, "-ex", "bt", "--args", "/tmp/binary", *argv,
+            ])
+            gdb_script = f"cp /artifact/{shlex.quote(bin_name)} /tmp/binary && chmod +x /tmp/binary; " + gdb_command
 
             cmd = [
                 self.docker_bin,

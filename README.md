@@ -74,8 +74,11 @@ timeout/OOM kill, an error type, and the same top frame — line info is compare
 only when both sides have it. Insufficient diagnostics, nondeterministic
 replays, or a failed minimization revalidation skip minimization (original
 input kept as fallback) and mark the finding inconclusive (exit code 40
-downstream). In generated `reproduce.sh`, target env vars are applied only to
-the child process via `env`, so they can never overwrite script internals.
+downstream). Production `reproduce.sh` scripts run the pinned Docker image
+with the original shell, environment overrides, resource limits and no network.
+The delivery package includes a Docker image archive for replay on another machine.
+Library-only bundles without a recorded sandbox retain native replay and require
+the caller to supply a compatible environment.
 
 ## Cross-module contracts
 
@@ -85,6 +88,11 @@ the child process via `env`, so they can never overwrite script internals.
 - **Strict expectation validation:** regression expectations reject non-boolean `crash`, boolean/string `exit_code` values, missing required fields, unsupported manifest formats, and malformed entries — nothing is coerced, and rejections happen before any runner call or suite write. This applies to promotion, manifest deserialization, and the public `verify_regression()` API itself.
 - **Full RELRO recognition:** immediate binding is detected via `DT_BIND_NOW`, `DF_1_NOW` in `DT_FLAGS_1`, and `DF_BIND_NOW` in `DT_FLAGS` (pyelftools and readelf paths).
 - **ddmin empty input:** after the chunk loop the empty input is tested once, so a one-byte input can still reduce to empty (skipped when the iteration budget is exhausted).
+- **Source safety:** source, work and regression-suite paths must not overlap; the builder checks source/work overlap before deleting any checkout or build directory.
+- **Mandatory coverage:** validation requires functional, boundary and security categories, including valid and invalid inputs, before building.
+- **Regression oracle format 2:** clean expectations retain independent exact/regex/JSON stdout and optional stderr checks. Legacy format 1 suites are rejected; regenerate them from the original independent expectations.
+- **Analysis flags:** `analysis_args` supplies attached `-I`, `-D`, `-U` and language flags to Clang, independently of the build commands.
+- **Persistent suites:** generated scenario configs store suites in `.regressions/`; CI restores them before validation and publishes suites and reproducers with the reports.
 
 ## Running validations
 

@@ -31,7 +31,12 @@ class TargetRunnerAdapter:
                 raise ValueError("artifact key does not match its execution context")
         self.config = config
         self.test_id = test_id
-        self.sandbox = sandbox if sandbox is not None else DockerSandboxRunner()
+        images = {artifact.sandbox_image for artifact in self.artifacts.values() if artifact.sandbox_image}
+        if len(images) > 1:
+            raise ValueError("build artifacts must share the same sandbox image")
+        self.sandbox = sandbox if sandbox is not None else (
+            DockerSandboxRunner(image=next(iter(images))) if images else DockerSandboxRunner()
+        )
         self.argv_template = (
             list(argv_template)
             if argv_template is not None

@@ -59,6 +59,7 @@ class TargetConfig:
     env_vars: dict[str, str] = field(default_factory=dict)
     functional_tests_path: str = ""
     security_tests_path: str = ""
+    analysis_args: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -70,6 +71,9 @@ class BuildArtifact:
     binary_sha256: str
     compile_flags: str
     build_dir: str
+    build_command: str = ""
+    sandbox_image: str | None = None
+    sandbox_env: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -269,3 +273,4 @@ class ValidationConfig:
     work_dir: str
     output_dir: str
     tests: list[TestSpec]
+    regression_suite_dir: str | None = None

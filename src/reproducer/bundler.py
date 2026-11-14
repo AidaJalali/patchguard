@@ -48,6 +48,12 @@ class FindingContext:
     patched_commit_hash: str | None = None
     compile_flags: str | None = None
     env_vars: dict[str, str] = field(default_factory=dict)
+    configured_env: dict[str, str] | None = None
+    sandbox_image: str | None = None
+    build_command: str = ""
+    timeout_sec: float = DEFAULT_TIMEOUT_SEC
+    memory_mb: int = 512
+    cpus: float = 1.0
 
 
 @dataclass
@@ -218,6 +224,8 @@ def create_bundle(
 
     (bundle_dir / "reproduce.sh").write_text(_generate_reproduce_script(finding))
     (bundle_dir / "reproduce.sh").chmod(0o755)
+    if finding.sandbox_image:
+        shutil.copy2(Path(__file__).with_name("replay.py"), bundle_dir / "replay.py")
 
     matching = sum(1 for r in replay.results if r.matched)
 
@@ -297,6 +305,17 @@ def _metadata(
             "build_type": crash.build_type,
             "compile_flags": finding.compile_flags,
             "env_vars": finding.env_vars,
+            "configured_env": finding.env_vars if finding.configured_env is None else finding.configured_env,
+            "command": finding.build_command,
+        },
+        "execution": {
+            "sandbox_image": finding.sandbox_image,
+            "timeout_sec": finding.timeout_sec,
+            "memory_mb": finding.memory_mb,
+            "cpus": finding.cpus,
+            "pids_limit": 64,
+            "network": "none",
+            "user": "1000:1000",
         },
         "invocation": {
             "input_mode": finding.input_mode,
@@ -339,7 +358,12 @@ def _metadata(
 
 
 def _generate_reproduce_script(finding: FindingContext) -> str:
-
+    if finding.sandbox_image:
+        return '\n'.join([
+            '#!/bin/sh', 'set -eu',
+            'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+            'exec python3 "$SCRIPT_DIR/replay.py" "$@"', '',
+        ])
     lines = [
         "#!/bin/sh",
         "set -u",

@@ -11,6 +11,7 @@ import yaml
 
 from exceptions import ConfigOrBuildError
 from models import TargetConfig, TestSpec, ValidationConfig
+from paths import paths_overlap
 
 REQUIRED_KEYS = (
     "target_name",
@@ -136,6 +137,15 @@ def _validate_and_build(data: Dict[str, Any]) -> TargetConfig:
             message="env_vars must be a mapping of string to string",
         )
     env_vars = {str(k): str(v) for k, v in env_vars.items()}
+    if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) or "\0" in value for key, value in env_vars.items()):
+        raise ConfigOrBuildError(code=30, message="env_vars require valid variable names and values without null bytes")
+    analysis_args = data.get("analysis_args", [])
+    if not isinstance(analysis_args, list) or any(
+        not isinstance(arg, str) or "\0" in arg
+        or not arg.startswith(("-I", "-D", "-U", "-std=", "-W", "-fno-", "-m"))
+        for arg in analysis_args
+    ):
+        raise ConfigOrBuildError(code=30, message="analysis_args must be a list of attached compiler include/define/language flags")
 
     try:
         return TargetConfig(
@@ -153,6 +163,7 @@ def _validate_and_build(data: Dict[str, Any]) -> TargetConfig:
             env_vars=env_vars,
             functional_tests_path=str(data.get("functional_tests_path", "")),
             security_tests_path=str(data.get("security_tests_path", "")),
+            analysis_args=list(analysis_args),
         )
     except (TypeError, ValueError) as exc:
         raise ConfigOrBuildError(
@@ -188,6 +199,14 @@ def load_validation_config(config_path: str) -> ValidationConfig:
     tests, seen = [], set()
     for index, item in enumerate(raw_tests):
         tests.append(_validate_test(item, index, target.input_mode, seen))
+    kinds = {test.kind for test in tests}
+    if kinds != set(TEST_KINDS) or not any(test.is_valid_input for test in tests) or not any(
+        not test.is_valid_input for test in tests
+    ):
+        raise ConfigOrBuildError(
+            code=30,
+            message="tests must cover functional, boundary, and security categories with valid and invalid inputs",
+        )
 
     argv_template = data.get("argv_template")
     if argv_template is not None:
@@ -215,11 +234,17 @@ def load_validation_config(config_path: str) -> ValidationConfig:
         if not isinstance(raw, str) or not raw.strip():
             raise ConfigOrBuildError(code=30, message=f"{label} must be a nonempty path string")
         resolved = Path(os.path.abspath(raw)).resolve()
-        if resolved == repo or repo in resolved.parents:
+        if paths_overlap(resolved, repo):
             raise ConfigOrBuildError(
                 code=30,
-                message=f"{label} ({raw}) must not live inside the target repo ({repo})",
+                message=f"{label} ({raw}) must not live inside or overlap the target repo ({repo})",
             )
+
+    regression_suite_dir = data.get("regression_suite_dir", str(Path(data["output_dir"]) / "regression_suite"))
+    if not isinstance(regression_suite_dir, str) or not regression_suite_dir.strip():
+        raise ConfigOrBuildError(code=30, message="regression_suite_dir must be a nonempty path")
+    if paths_overlap(regression_suite_dir, repo) or paths_overlap(regression_suite_dir, data["work_dir"]):
+        raise ConfigOrBuildError(code=30, message="regression_suite_dir must not overlap the target repository or work_dir")
 
     return ValidationConfig(
         target=target,
@@ -228,6 +253,7 @@ def load_validation_config(config_path: str) -> ValidationConfig:
         work_dir=os.path.abspath(str(data["work_dir"])),
         output_dir=os.path.abspath(str(data["output_dir"])),
         tests=tests,
+        regression_suite_dir=os.path.abspath(regression_suite_dir),
     )
 
 

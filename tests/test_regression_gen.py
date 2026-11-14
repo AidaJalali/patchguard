@@ -37,7 +37,7 @@ BUNDLE_SIGNATURE = CrashSignature(
 )
 DEFAULT_EXPECTATION = RegressionExpectation(
     base=VersionExpectation(crash=True),
-    patched=VersionExpectation(crash=False, exit_code=0),
+    patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0),
 )
 
 
@@ -194,7 +194,7 @@ class TestPromotionEligibility:
         assert entry.input_sha256 == hashlib.sha256(b"PWN").hexdigest()
 
         manifest = read_manifest(tmp_path / "suite")
-        assert manifest["format"] == 1
+        assert manifest["format"] == 2
         stored = manifest["entries"]["f1"]
         assert stored["input_path"] == versioned_name
         assert stored["source_bundle"] == str(tmp_path / "reproducers" / "f1")
@@ -217,6 +217,7 @@ class TestPromotionEligibility:
             "crash": False,
             "exit_code": 0,
             "test_id": "t1",
+            "oracle": {"stdout_kind": "exact", "stdout_value": "ok", "stderr_pattern": None},
         }
 
     def test_rejects_flaky_artifact_even_with_three_of_three(self, tmp_path):
@@ -367,7 +368,7 @@ class TestPromotionEligibility:
         )
         expectation = RegressionExpectation(
             base=VersionExpectation(crash=True, signature=BUNDLE_SIGNATURE),
-            patched=VersionExpectation(crash=False, exit_code=0),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0),
         )
         with pytest.raises(RegressionError, match="insufficient"):
             promote_to_regression_suite(
@@ -385,7 +386,7 @@ class TestPromotionEligibility:
             line=7,
         )
         expectation = RegressionExpectation(
-            base=VersionExpectation(crash=False, exit_code=0),
+            base=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0),
             patched=VersionExpectation(crash=True, signature=new_issue),
         )
         entry = promote_to_regression_suite(
@@ -395,6 +396,7 @@ class TestPromotionEligibility:
             "crash": False,
             "exit_code": 0,
             "test_id": "t1",
+            "oracle": {"stdout_kind": "exact", "stdout_value": "ok", "stderr_pattern": None},
         }
         assert entry.expected["patched"]["crash"] is True
         assert entry.expected["patched"]["signature"]["function"] == "other_fn"
@@ -403,8 +405,8 @@ class TestPromotionEligibility:
     def test_rejects_all_clean_expectations(self, tmp_path):
         artifact = write_bundle(tmp_path)
         expectation = RegressionExpectation(
-            base=VersionExpectation(crash=False, exit_code=0),
-            patched=VersionExpectation(crash=False, exit_code=0),
+            base=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0),
         )
         with pytest.raises(RegressionError, match="at least one version"):
             promote_to_regression_suite(
@@ -549,7 +551,7 @@ class VersionedRunner:
 
 EXPECTATION = RegressionExpectation(
     base=VersionExpectation(crash=True, signature=BUNDLE_SIGNATURE, test_id="t1"),
-    patched=VersionExpectation(crash=False, exit_code=0, test_id="t1"),
+    patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0, test_id="t1"),
 )
 
 
@@ -604,7 +606,7 @@ class TestVerificationHelper:
             base=VersionExpectation(
                 crash=True, signature=BUNDLE_SIGNATURE, test_id="t1"
             ),
-            patched=VersionExpectation(crash=False, exit_code=3, test_id="t1"),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=3, test_id="t1"),
         )
         ok_runner = VersionedRunner(
             base=make_crash(), patched=make_clean(version="patched", exit_code=3)
@@ -628,7 +630,7 @@ class TestVerificationHelper:
             base=VersionExpectation(
                 crash=True, signature=BUNDLE_SIGNATURE, exit_code=1, test_id="t1"
             ),
-            patched=VersionExpectation(crash=False, exit_code=0, test_id="t1"),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0, test_id="t1"),
         )
         runner = VersionedRunner(
             base=make_crash(exit_code=134), patched=make_clean(version="patched")
@@ -668,7 +670,7 @@ class TestVerificationHelper:
                     error_type=None, function=None, file=None, line=None
                 ),
             ),
-            patched=VersionExpectation(crash=False, exit_code=0),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0),
         )
         runner = VersionedRunner(
             base=make_crash(), patched=make_clean(version="patched")
@@ -679,7 +681,7 @@ class TestVerificationHelper:
     def test_unresolved_signature_rejected(self):
         expectation = RegressionExpectation(
             base=VersionExpectation(crash=True, signature=None),
-            patched=VersionExpectation(crash=False, exit_code=0),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0),
         )
         runner = VersionedRunner(
             base=make_crash(), patched=make_clean(version="patched")
@@ -697,7 +699,7 @@ class TestVerifyRegressionValidation:
             base=VersionExpectation(
                 crash=True, signature=BUNDLE_SIGNATURE, test_id="t1"
             ),
-            patched=VersionExpectation(crash=False, exit_code=0, test_id="t1"),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0, test_id="t1"),
         )
         kwargs.update(overrides)
         return RegressionExpectation(**kwargs)
@@ -715,7 +717,7 @@ class TestVerifyRegressionValidation:
     @pytest.mark.parametrize("bad_exit", [True, False, "3", 3.5])
     def test_invalid_exit_code_types_rejected_with_zero_calls(self, bad_exit):
         expectation = self._expectation(
-            patched=VersionExpectation(crash=False, exit_code=bad_exit),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=bad_exit),
         )
         runner = self._runner()
         with pytest.raises(RegressionError, match="integer"):
@@ -792,7 +794,7 @@ class TestVerifyRegressionValidation:
 
     def test_valid_nonzero_exit_code_still_works(self):
         expectation = self._expectation(
-            patched=VersionExpectation(crash=False, exit_code=3, test_id="t1"),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=3, test_id="t1"),
         )
         runner = VersionedRunner(
             base=make_crash(), patched=make_clean(version="patched", exit_code=3)
@@ -830,7 +832,7 @@ class TestMalformedSignatureValidation:
     def test_malformed_signature_types_rejected_with_zero_calls(self, bad_signature):
         expectation = RegressionExpectation(
             base=VersionExpectation(crash=True, signature=bad_signature),
-            patched=VersionExpectation(crash=False, exit_code=0),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0),
         )
         runner = self._runner()
         with pytest.raises(RegressionError, match="must be a CrashSignature"):
@@ -860,7 +862,7 @@ class TestMalformedSignatureValidation:
                     "line": 42,
                 },
             ),
-            patched=VersionExpectation(crash=False, exit_code=0),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0),
         )
         with pytest.raises(RegressionError, match="must be a CrashSignature"):
             promote_to_regression_suite(
@@ -873,7 +875,7 @@ class TestMalformedSignatureValidation:
             base=VersionExpectation(
                 crash=True, signature=BUNDLE_SIGNATURE, test_id="t1"
             ),
-            patched=VersionExpectation(crash=False, exit_code=0, test_id="t1"),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0, test_id="t1"),
         )
         runner = self._runner()
         assert (
@@ -904,7 +906,7 @@ class TestVerifyRegressionContextEnforcement:
             base=VersionExpectation(
                 crash=True, signature=BUNDLE_SIGNATURE, test_id="t1"
             ),
-            patched=VersionExpectation(crash=False, exit_code=0, test_id="t1"),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0, test_id="t1"),
         )
         with pytest.raises(ValueError, match="execution context mismatch"):
             verify_regression(
@@ -920,7 +922,7 @@ class TestVerifyRegressionContextEnforcement:
             base=VersionExpectation(
                 crash=True, signature=BUNDLE_SIGNATURE, test_id="t1"
             ),
-            patched=VersionExpectation(crash=False, exit_code=0, test_id="t1"),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0, test_id="t1"),
         )
         with pytest.raises(ValueError, match="build_type"):
             verify_regression(
@@ -932,7 +934,7 @@ class TestVerifyRegressionContextEnforcement:
             base=VersionExpectation(
                 crash=True, signature=BUNDLE_SIGNATURE, test_id="t1"
             ),
-            patched=VersionExpectation(crash=False, exit_code=0, test_id="t1"),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0, test_id="t1"),
         )
         runner = VersionedRunner(
             base=make_crash(test_id="other"),
@@ -946,7 +948,7 @@ class TestVerifyRegressionContextEnforcement:
             base=VersionExpectation(
                 crash=True, signature=BUNDLE_SIGNATURE, test_id="t1"
             ),
-            patched=VersionExpectation(crash=False, exit_code=0, test_id="t1"),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0, test_id="t1"),
         )
         runner = VersionedRunner(
             base=make_crash(), patched=make_clean(version="patched")
@@ -961,7 +963,7 @@ class TestVerifyRegressionContextEnforcement:
         entry = make_entry(
             {
                 "base": {"crash": True, "signature": GOOD_BASE["signature"]},
-                "patched": {"crash": False, "exit_code": 0},
+                "patched": {"crash": False, "exit_code": 0, "oracle": {"stdout_kind": "exact", "stdout_value": "ok"}},
             }
         )
         runner = VersionedRunner(
@@ -975,7 +977,7 @@ class TestVerifyRegressionContextEnforcement:
     def test_direct_api_requires_test_provenance_with_zero_calls(self):
         expectation = RegressionExpectation(
             base=VersionExpectation(crash=True, signature=BUNDLE_SIGNATURE),
-            patched=VersionExpectation(crash=False, exit_code=0),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0),
         )
         runner = VersionedRunner(
             base=make_crash(), patched=make_clean(version="patched")
@@ -1176,7 +1178,7 @@ class TestIntegrationWithRealFixtures:
         build_dir, artifact, runner = real_bundle_and_runner
         expectation = RegressionExpectation(
             base=VersionExpectation(crash=True),
-            patched=VersionExpectation(crash=False, exit_code=0),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="", exit_code=0),
         )
         entry = promote_to_regression_suite(
             artifact, expectation, suite_root=build_dir / "suite"
@@ -1197,7 +1199,7 @@ class TestIntegrationWithRealFixtures:
         runner._binaries["patched"] = runner._binaries["base"]
         expectation = RegressionExpectation(
             base=VersionExpectation(crash=True),
-            patched=VersionExpectation(crash=False, exit_code=0),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="", exit_code=0),
         )
         entry = promote_to_regression_suite(
             artifact, expectation, suite_root=build_dir / "suite2"
@@ -1396,7 +1398,8 @@ GOOD_BASE = {
     },
     "test_id": "t1",
 }
-GOOD_PATCHED = {"crash": False, "exit_code": 0, "test_id": "t1"}
+GOOD_PATCHED = {"crash": False, "exit_code": 0, "test_id": "t1",
+                "oracle": {"stdout_kind": "exact", "stdout_value": "ok", "stderr_pattern": None}}
 
 
 class TestStrictExpectationValidation:
@@ -1460,7 +1463,7 @@ class TestStrictExpectationValidation:
         manifest_path = tmp_path / "suite" / "auto_generated" / "manifest.json"
         before = manifest_path.read_bytes()
         original = json.loads(before)
-        original["format"] = 2
+        original["format"] = 999
         manifest_path.write_text(json.dumps(original))
         other = write_bundle(tmp_path, finding_id="f2", minimized=b"BBB")
         with pytest.raises(RegressionError, match="unsupported manifest format"):
@@ -1474,7 +1477,7 @@ class TestStrictExpectationValidation:
         artifact = write_bundle(tmp_path)
         expectation = RegressionExpectation(
             base=VersionExpectation(crash="false"),
-            patched=VersionExpectation(crash=False, exit_code=0),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=0),
         )
         with pytest.raises(RegressionError, match="actual boolean"):
             promote_to_regression_suite(
@@ -1485,7 +1488,7 @@ class TestStrictExpectationValidation:
         artifact = write_bundle(tmp_path)
         expectation = RegressionExpectation(
             base=VersionExpectation(crash=True),
-            patched=VersionExpectation(crash=False, exit_code=True),
+            patched=VersionExpectation(crash=False, stdout_kind="exact", stdout_value="ok", exit_code=True),
         )
         with pytest.raises(RegressionError, match="integer"):
             promote_to_regression_suite(
@@ -1496,7 +1499,7 @@ class TestStrictExpectationValidation:
         entry = make_entry(
             {
                 "base": GOOD_BASE,
-                "patched": {"crash": False, "exit_code": 3, "test_id": "t1"},
+                "patched": {"crash": False, "exit_code": 3, "test_id": "t1", "oracle": {"stdout_kind": "exact", "stdout_value": "ok"}},
             }
         )
         runner = VersionedRunner(

@@ -11,7 +11,7 @@ _ASAN_ERROR_RE = re.compile(
     re.MULTILINE,
 )
 _ASAN_SEGV_NULL_RE = re.compile(
-    r"AddressSanitizer:\s*SEGV\s+on\s+unknown\s+address\s+0x0+",
+    r"AddressSanitizer:\s*SEGV\s+on\s+unknown\s+address\s+0x0+(?![0-9a-f])",
     re.IGNORECASE,
 )
 
@@ -146,7 +146,7 @@ class DiagnosticsParser:
                 crashed=True,
                 error_type="stack-canary-abort",
                 detection_mechanism="BINARY_PROTECTION",
-                stack_trace=self._parse_sanitizer_frames(combined),
+                stack_trace=self._parse_sanitizer_frames(combined) or self._parse_gdb_frames(gdb_backtrace),
             )
 
         signal = self._signal_from_exit(exit_code)
@@ -202,7 +202,7 @@ class DiagnosticsParser:
         error_type = (
             raw_type if raw_type in known else raw_type.lower().replace(" ", "-")
         )
-        if "null" in error_type or error_type.startswith("segv"):
+        if "null" in error_type:
             error_type = "null-dereference"
         return error_type, self._parse_sanitizer_frames(text)
 

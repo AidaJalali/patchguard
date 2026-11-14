@@ -67,12 +67,28 @@ jobs:
           python -m pip install -r requirements.txt
       - name: Build the sandbox image
         run: docker build -t patchguard-sandbox:latest .
+      - name: Restore generated regression suites
+        uses: actions/cache/restore@v4
+        with:
+          path: .regressions/
+          key: patchguard-regressions-v2-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            patchguard-regressions-v2-${{ runner.os }}-${{ github.ref_name }}-
       - name: Run the scenario matrix
         run: ./run_all_scenarios.sh
+      - name: Persist verified regression suites
+        uses: actions/cache/save@v4
+        with:
+          path: .regressions/
+          key: patchguard-regressions-v2-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Publish scenario artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: scenario-artifacts
-          path: /tmp/patchguard-scenarios/
+          path: |
+            /tmp/patchguard-scenarios/
+            outputs/
+            .regressions/
+          include-hidden-files: true
           if-no-files-found: warn

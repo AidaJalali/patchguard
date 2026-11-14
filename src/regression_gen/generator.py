@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,8 +20,9 @@ from models import (
     sufficient_crash_evidence,
 )
 from reproducer.bundler import _FINDING_ID_RE, DEFAULT_TIMEOUT_SEC
+from oracle.functional_oracle import OracleExpectation, evaluate
 
-MANIFEST_FORMAT = 1
+MANIFEST_FORMAT = 2
 AUTO_GENERATED_DIR = "auto_generated"
 MANIFEST_NAME = "manifest.json"
 
@@ -35,6 +37,9 @@ class VersionExpectation:
     exit_code: int | None = None
     signature: CrashSignature | None = None
     test_id: str | None = None
+    stdout_kind: str | None = None
+    stdout_value: object = None
+    stderr_pattern: str | None = None
 
     def to_dict(self) -> dict:
         data: dict = {"crash": self.crash}
@@ -44,6 +49,12 @@ class VersionExpectation:
             data["exit_code"] = self.exit_code
         if self.test_id is not None:
             data["test_id"] = self.test_id
+        if not self.crash:
+            data["oracle"] = {
+                "stdout_kind": self.stdout_kind,
+                "stdout_value": self.stdout_value,
+                "stderr_pattern": self.stderr_pattern,
+            }
         return data
 
     def validate(self, label: str, *, allow_unresolved_signature: bool) -> None:
@@ -72,6 +83,21 @@ class VersionExpectation:
                     f"{label}: clean-run expectation requires an explicit "
                     "exit_code (nonzero allowed)"
                 )
+            if self.stdout_kind not in ("exact", "regex", "json"):
+                raise RegressionError(f"{label}: clean-run expectation requires an independent stdout oracle")
+            if self.stdout_kind in ("exact", "regex") and not isinstance(self.stdout_value, str):
+                raise RegressionError(f"{label}: stdout oracle value must be a string")
+            try:
+                if self.stdout_kind == "regex":
+                    re.compile(self.stdout_value)
+                if self.stdout_kind == "json":
+                    json.dumps(self.stdout_value, allow_nan=False)
+                if self.stderr_pattern is not None:
+                    if not isinstance(self.stderr_pattern, str):
+                        raise TypeError("stderr_pattern must be a string")
+                    re.compile(self.stderr_pattern)
+            except (ValueError, TypeError, re.error) as exc:
+                raise RegressionError(f"{label}: invalid independent oracle: {exc}") from exc
         elif self.signature is None:
             if not allow_unresolved_signature:
                 raise RegressionError(
@@ -464,7 +490,12 @@ def _evaluate(
                 (f"exit_code {result.exit_code} != expected {expectation.exit_code}"),
             )
         else:
-            ok, reason = True, f"exit_code {result.exit_code} as expected"
+            oracle = evaluate(result, OracleExpectation(
+                result.test_id, expectation.exit_code, False,
+                expectation.stdout_kind, expectation.stdout_value, expectation.stderr_pattern,
+            ))
+            ok = oracle.passed
+            reason = "independent oracle satisfied; exit_code as expected" if ok else "; ".join(oracle.reasons)
 
     return VersionOutcome(
         version=result.version,
@@ -746,6 +777,9 @@ def _resolve_context(
         exit_code=expectation.exit_code,
         signature=(bundle_signature if needs_signature else expectation.signature),
         test_id=replay_test_id if needs_test_id else expectation.test_id,
+        stdout_kind=expectation.stdout_kind,
+        stdout_value=expectation.stdout_value,
+        stderr_pattern=expectation.stderr_pattern,
     )
 
 
@@ -839,6 +873,9 @@ def _expectation_from_dict(data) -> VersionExpectation:
     if "crash" not in data:
         raise RegressionError("expectation is missing the required 'crash' field")
     signature_data = data.get("signature")
+    oracle = data.get("oracle", {})
+    if not isinstance(oracle, dict):
+        raise RegressionError("expectation oracle must be an object")
     expectation = VersionExpectation(
         crash=data["crash"],
         exit_code=data.get("exit_code"),
@@ -846,6 +883,9 @@ def _expectation_from_dict(data) -> VersionExpectation:
             _signature_from_json(signature_data) if signature_data is not None else None
         ),
         test_id=data.get("test_id"),
+        stdout_kind=oracle.get("stdout_kind"),
+        stdout_value=oracle.get("stdout_value"),
+        stderr_pattern=oracle.get("stderr_pattern"),
     )
     expectation.validate("manifest expectation", allow_unresolved_signature=False)
     return expectation

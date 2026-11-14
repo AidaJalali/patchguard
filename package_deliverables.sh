@@ -58,8 +58,8 @@ for target in fixture-target cjson-target; do
         if [ -d "$scenario_dir/reproducers" ]; then
             cp -r "$scenario_dir/reproducers" "delivery/reproducers/$target/$scenario/"
         fi
-        if [ -d "$scenario_dir/regression_suite" ]; then
-            cp -r "$scenario_dir/regression_suite" "delivery/regression-suites/$target/$scenario/"
+        if [ -d ".regressions/$target/$scenario" ]; then
+            cp -r ".regressions/$target/$scenario" "delivery/regression-suites/$target/$scenario/regression_suite"
         fi
     done
 done
@@ -70,6 +70,21 @@ cp targets/build_fixture_target.sh targets/build_cjson_target.sh delivery/config
 mkdir -p delivery/targets
 git -C targets/fixture_target bundle create "$(pwd)/delivery/targets/fixture_target.bundle" --all
 git -C targets/cjson_target bundle create "$(pwd)/delivery/targets/cjson_target.bundle" --all
+mapfile -t SANDBOX_IMAGES < <("$PYTHON" - <<'PY'
+import json
+from pathlib import Path
+images = set()
+for path in Path("delivery/reports").glob("*/report.json"):
+    image = json.loads(path.read_text()).get("execution_settings", {}).get("sandbox_image")
+    if image:
+        images.add(image)
+for image in sorted(images):
+    print(image)
+PY
+)
+if [ "${#SANDBOX_IMAGES[@]}" -gt 0 ]; then
+    docker save -o delivery/sandbox-images.tar "${SANDBOX_IMAGES[@]}"
+fi
 
 cat > delivery/MANIFEST.md <<'EOF'
 # Delivery manifest
@@ -90,6 +105,10 @@ cat > delivery/MANIFEST.md <<'EOF'
   every revision the configs reference. Restore them with:
   `git clone delivery/targets/fixture_target.bundle targets/fixture_target`
   (and the same for `cjson_target.bundle`).
+- `sandbox-images.tar` — recorded Docker runtime images; restore with
+  `docker load -i delivery/sandbox-images.tar` before replaying a bundle on
+  another machine. Each production `reproduce.sh` runs the recorded image
+  with its effective environment, resource limits, and no network.
 - Reproduce everything: `./run_all_scenarios.sh` from the repository root
   (see docs/09 and docs/10 for setup).
 EOF
