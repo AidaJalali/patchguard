@@ -43,6 +43,8 @@ Project planning documents live in [`docs/`](docs/):
 | [Overall Architecture, Timeline & Task Dependencies](<docs/03 - Overall Architecture, Timeline & Task Dependencies.docx>) | Architecture overview, schedule, and task dependencies |
 | [Person 3 Development Plan](<docs/04 - Person 3 Development Plan.md>) | Build plan for the Reproducibility, Minimizer & Binary Hardening modules |
 | [Validation Pipeline](<docs/09 - Validation Pipeline.md>) | End-to-end validate pipeline: setup, schema, targets, scenario matrix, limitations |
+| [Final Report](<docs/10 - Final Report.md>) | Consolidated course-upload report: architecture, verification evidence, defense mapping |
+| [Team Contributions](<docs/11 - Team Contributions.md>) | Verifiable module ownership vs. personal contribution claims (requires team confirmation) |
 
 ## Validation pipeline
 

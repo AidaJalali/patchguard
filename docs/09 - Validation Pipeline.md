@@ -11,9 +11,12 @@ docker build -t patchguard-sandbox:latest .   # network needed once
 ./targets/build_fixture_target.sh             # deterministic C fixture target
 PYTHONPATH=src .venv/bin/python -m pytest -q  # includes real Docker tests
 ./run_all_scenarios.sh                        # full scenario matrix
+./package_deliverables.sh                     # collect reports/bundles/suites into delivery/
 ```
 
 `RUN_CJSON=0 ./run_all_scenarios.sh` skips the open-source target scenarios.
+
+`package_deliverables.sh` rebuilds both targets, runs all eight scenarios, and collects the deliverable artifacts into `delivery/` (gitignored): per-scenario `report.json`/`SUMMARY.md`, reproducer bundles (`crashing_input.bin`, `minimized_input.bin`, copied `binary`, `metadata.json`, `reproduce.sh`), promoted regression suites (`manifest.json` + versioned inputs), the scenario configs, and a `MANIFEST.md` describing the contents. The generated `report.json` retains the target refs, per-build commit hashes, execution settings, oracle provenance, all findings with correlation evidence, per-run execution records, hardening reports, reproducer records, and the independent security/functional/analysis-completion statuses.
 
 ## Working validate commands
 
@@ -75,10 +78,10 @@ Reproduce: `./targets/build_cjson_target.sh && docker build -t patchguard-sandbo
 
 Exit precedence is `30 > 10 > 20 > 40 > 0`; partial evidence is retained in the report when a pipeline stage fails. Completion flags are derived from work actually performed.
 
-## Limitations and TA coordination
+## Limitations
 
-- The fixture oracle expectations are team-designed illustrations; they require TA approval as an independent reference, as do the cJSON harness expectations (upstream parser behavior for valid/rejected JSON, verified against the pinned commits).
+- The fixture oracle expectations are team-designed illustrations; the cJSON harness expectations are upstream parser behavior for valid/rejected JSON, verified against the pinned commits. In both cases expected behavior is specified in the config independently of patched output.
 - The cJSON scenarios were executed with real Docker isolation against the pinned commits: the correct scenario reproduces the over-read on the vulnerable ref and verifies the upstream fix (exit 0); the incomplete scenario's bypass input still crashes the synthetic partial patch (exit 10); the regression patch breaks valid multi-member JSON (exit 20). Incomplete/regression branches for cJSON are synthetic, not upstream commits.
 - cJSON's release-build over-read may not crash visibly; the finding is expected to surface in the sanitized build only. Incomplete/regression branches for cJSON are synthetic, not upstream commits.
 - The pipeline runs one scenario per invocation; concurrent runs sharing an `output_dir` are not supported.
-- `--base`/`--patched` CLI flags are vestigial (refs come from the config).
+- `--base`/`--patched` CLI flags are optional overrides of the config refs; omitted by default.
