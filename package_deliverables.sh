@@ -67,6 +67,10 @@ done
 cp targets/configs/*.yaml delivery/configs/
 cp targets/build_fixture_target.sh targets/build_cjson_target.sh delivery/configs/
 
+mkdir -p delivery/targets
+git -C targets/fixture_target bundle create "$(pwd)/delivery/targets/fixture_target.bundle" --all
+git -C targets/cjson_target bundle create "$(pwd)/delivery/targets/cjson_target.bundle" --all
+
 cat > delivery/MANIFEST.md <<'EOF'
 # Delivery manifest
 
@@ -74,10 +78,18 @@ cat > delivery/MANIFEST.md <<'EOF'
   executions (fixture target: 5 scenarios; cJSON: 3 scenarios).
 - `reproducers/<target>/<scenario>/reproducers/{base,patched}/<finding_id>/` —
   self-contained reproducer bundles (crashing input, minimized input, copied
-  binary, metadata.json, reproduce.sh).
+  binary, metadata.json, reproduce.sh). The `metadata.json` files record the
+  build workspace paths where the runs happened — those are provenance
+  records, not requirements: every bundle replays standalone via its own
+  `reproduce.sh` (run it from any directory).
 - `regression-suites/<target>/<scenario>/` — promoted regression inputs and
-  manifest.json.
+  manifest.json. All `input_path` entries in the manifests are relative to
+  the suite's `auto_generated/` directory, so the suites relocate cleanly.
 - `configs/` — the scenario configurations used, plus the target builders.
+- `targets/*.bundle` — immutable git bundles of both target repositories with
+  every revision the configs reference. Restore them with:
+  `git clone delivery/targets/fixture_target.bundle targets/fixture_target`
+  (and the same for `cjson_target.bundle`).
 - Reproduce everything: `./run_all_scenarios.sh` from the repository root
   (see docs/09 and docs/10 for setup).
 EOF
